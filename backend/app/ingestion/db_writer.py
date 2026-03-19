@@ -1,15 +1,11 @@
 from __future__ import annotations
 import logging
-from typing import TYPE_CHECKING
 import orjson
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.ingestion.schemas import NormalizedRecord
 from app.db.models.eval_record import EvalRecord  # ORM model from Plan 1
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +51,7 @@ class BatchWriter:
         """Write buffered records to PostgreSQL using ON CONFLICT DO NOTHING."""
         if not self._buffer:
             return
+        # Note: `record.model` is stored in EvalSession, not in EvalRecord rows
         rows = [
             {
                 "session_id": r.session_id,

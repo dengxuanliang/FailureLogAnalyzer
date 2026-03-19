@@ -5,11 +5,10 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from starlette.websockets import WebSocketState
 
 from app.core.redis import get_redis
+from app.ingestion.progress import _PROGRESS_CHANNEL_PREFIX
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-_PROGRESS_CHANNEL_PREFIX = "progress"
 
 
 async def relay_progress(websocket: WebSocket, job_id: str) -> None:

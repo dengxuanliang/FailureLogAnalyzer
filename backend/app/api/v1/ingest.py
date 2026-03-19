@@ -6,11 +6,13 @@ from typing import Annotated
 
 import aiofiles
 import aiofiles.os
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.redis import get_redis
+from app.api.v1.deps import get_current_user
+from app.db.models.user import User
 from app.ingestion.job_store import create_job, get_job_status
 from app.tasks.ingest import parse_file
 
@@ -23,7 +25,7 @@ _UPLOAD_DIR = Path(settings.UPLOAD_DIR)  # e.g. /tmp/fla_uploads
 
 async def save_upload_file(upload: UploadFile, dest_dir: Path) -> str:
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / (upload.filename or "upload.jsonl")
+    dest = dest_dir / Path(upload.filename or "upload.jsonl").name
     async with aiofiles.open(dest, "wb") as out:
         while chunk := await upload.read(1024 * 1024):  # 1 MB chunks
             await out.write(chunk)
@@ -58,6 +60,7 @@ async def upload_file(
     model_version: Annotated[str, Form()],
     adapter_name: Annotated[str | None, Form()] = None,
     session_id: Annotated[str | None, Form()] = None,
+    current_user: User = Depends(get_current_user),
 ) -> UploadResponse:
     """
     POST /api/v1/ingest/upload
@@ -99,12 +102,19 @@ async def upload_file(
 
 
 @router.post("/directory", response_model=DirectoryResponse, status_code=status.HTTP_202_ACCEPTED)
-async def ingest_directory(body: DirectoryRequest) -> DirectoryResponse:
+async def ingest_directory(
+    body: DirectoryRequest,
+    current_user: User = Depends(get_current_user),
+) -> DirectoryResponse:
     """
     POST /api/v1/ingest/directory
     Scan a server-side directory and queue one Celery task per .json/.jsonl file.
     """
     dir_path = Path(body.directory_path)
+    base = Path(settings.UPLOAD_DIR).resolve()
+    resolved = dir_path.resolve()
+    if not str(resolved).startswith(str(base)):
+        raise HTTPException(status_code=403, detail="Directory must be within upload root")
     if not dir_path.is_dir():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -145,7 +155,10 @@ async def ingest_directory(body: DirectoryRequest) -> DirectoryResponse:
 
 
 @router.get("/{job_id}/status")
-async def get_ingest_status(job_id: str) -> dict:
+async def get_ingest_status(
+    job_id: str,
+    current_user: User = Depends(get_current_user),
+) -> dict:
     """
     GET /api/v1/ingest/{job_id}/status
     Poll ingestion job status (alternative to WebSocket).

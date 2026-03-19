@@ -1,7 +1,10 @@
 from __future__ import annotations
+import logging
 import orjson
 from abc import ABC, abstractmethod
 from app.ingestion.schemas import NormalizedRecord
+
+logger = logging.getLogger(__name__)
 
 
 class BaseAdapter(ABC):
@@ -26,8 +29,7 @@ class BaseAdapter(ABC):
         try:
             return self.normalize(raw)
         except Exception as exc:
-            import logging
-            logging.getLogger(__name__).warning(
+            logger.warning(
                 "Adapter %s failed on record: %s — %s",
                 self.__class__.__name__,
                 orjson.dumps(raw)[:200].decode(),
