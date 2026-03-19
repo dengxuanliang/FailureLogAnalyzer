@@ -135,4 +135,8 @@ _DEFAULT_PATHS = [
     "生成质量问题.重复生成",
     "生成质量问题.不完整回答",
     "生成质量问题.过度对齐",
+    # Annotation (not error categories — used by ExactMatchRule)
+    "匹配标注",
+    "匹配标注.精确匹配",
+    "匹配标注.大小写匹配",
 ]

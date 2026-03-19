@@ -33,7 +33,7 @@ class RuleRegistry:
         self._rules.sort(key=lambda r: r.priority)
 
     def all_rules(self) -> list[BaseRule]:
-        return list(self._rules)
+        return [r for r in self._rules if r.is_enabled()]
 
     def get_rules_by_ids(self, ids: list[str]) -> list[BaseRule]:
         id_set = set(ids)

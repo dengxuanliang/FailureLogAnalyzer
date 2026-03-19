@@ -1,16 +1,26 @@
 """Pydantic schemas for analysis_rules API."""
 from __future__ import annotations
+import re
 import uuid
 from datetime import datetime
-from typing import Any, Optional
-from pydantic import BaseModel, Field
+from typing import Any, Literal, Optional
+from pydantic import BaseModel, Field, model_validator
 
 
 class RuleCondition(BaseModel):
-    type: str  # regex | contains | not_contains | length_gt | length_lt | field_equals | field_missing | python_expr
+    type: Literal["regex", "contains", "not_contains", "length_gt", "length_lt", "field_equals", "field_missing"]
     pattern: Optional[str] = None   # for regex
     value: Optional[Any] = None     # for contains/not_contains/length_gt/length_lt/field_equals
-    expr: Optional[str] = None      # for python_expr
+    expr: Optional[str] = None      # kept for backwards compat but not used
+
+    @model_validator(mode="after")
+    def validate_regex_pattern(self) -> "RuleCondition":
+        if self.type == "regex" and self.pattern:
+            try:
+                re.compile(self.pattern)
+            except re.error as e:
+                raise ValueError(f"Invalid regex pattern: {e}")
+        return self
 
 
 class RuleCreate(BaseModel):

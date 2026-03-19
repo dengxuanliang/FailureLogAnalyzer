@@ -1,7 +1,6 @@
 """Custom rule loaded from YAML dict or file."""
 from __future__ import annotations
 import re
-from dataclasses import dataclass, field
 from typing import Any
 import yaml
 from app.rules.base import BaseRule, RuleContext, RuleResult
@@ -57,7 +56,10 @@ class CustomRule(BaseRule):
         ctype = cond["type"]
 
         if ctype == "regex":
-            return bool(re.search(cond["pattern"], str(value or "")))
+            try:
+                return bool(re.search(cond["pattern"], str(value or "")))
+            except re.error:
+                return False
 
         if ctype == "contains":
             return cond["value"] in str(value or "")
@@ -76,14 +78,6 @@ class CustomRule(BaseRule):
 
         if ctype == "field_missing":
             return value is None or value == ""
-
-        if ctype == "python_expr":
-            # Sandboxed eval — only `value` and `ctx` are in scope.
-            # SECURITY NOTE: only Analyst/Admin users may create python_expr rules.
-            try:
-                return bool(eval(cond["expr"], {"__builtins__": {"len": len, "str": str, "int": int, "float": float, "bool": bool}}, {"value": value, "ctx": ctx}))  # noqa: S307
-            except Exception:
-                return False
 
         raise ValueError(f"Unknown condition type: {ctype!r}")
 

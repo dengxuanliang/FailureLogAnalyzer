@@ -7,22 +7,30 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.db.session import get_db
-from app.api.v1.deps import require_role
+from app.api.v1.deps import get_current_user, require_role
 from app.db.models.analysis_rule import AnalysisRule
 from app.db.models.enums import UserRole
+from app.db.models.user import User
 from app.schemas.rule import RuleCreate, RulePatch, RuleResponse
 
 router = APIRouter(prefix="/rules", tags=["rules"])
 
 
 @router.get("", response_model=list[RuleResponse])
-async def list_rules(db: AsyncSession = Depends(get_db)):
+async def list_rules(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
     result = await db.execute(select(AnalysisRule).order_by(AnalysisRule.priority))
     return result.scalars().all()
 
 
 @router.get("/{rule_id}", response_model=RuleResponse)
-async def get_rule(rule_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_rule(
+    rule_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
     rule = await db.get(AnalysisRule, rule_id)
     if rule is None:
         raise HTTPException(status_code=404, detail="Rule not found")
@@ -36,8 +44,6 @@ async def create_rule(
     current_user=Depends(require_role(UserRole.analyst)),
 ):
     data = payload.model_dump()
-    # Convert RuleCondition to dict for JSONB storage
-    data["condition"] = data["condition"]
     rule = AnalysisRule(
         **data,
         created_by=current_user.username,

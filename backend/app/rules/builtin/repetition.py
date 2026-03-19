@@ -1,4 +1,3 @@
-from collections import Counter
 from app.rules.base import BaseRule, RuleContext, RuleResult
 
 _MIN_TOKENS = 30

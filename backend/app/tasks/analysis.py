@@ -148,12 +148,7 @@ async def _run_rules_for_session_async(
 # Celery task entry point
 # -----------------------------------------------------------------------
 
-@shared_task(
-    name="tasks.analysis.run_rules",
-    bind=True,
-    max_retries=3,
-    default_retry_delay=10,
-)
+@shared_task(name="tasks.analysis.run_rules", bind=True, max_retries=3, default_retry_delay=10)
 def run_rules(self, session_id: str, rule_ids: Optional[list[str]] = None) -> dict:
     """
     Celery task: run rule engine over all eval_records in a session.
@@ -167,19 +162,6 @@ def run_rules(self, session_id: str, rule_ids: Optional[list[str]] = None) -> di
         Summary dict with total_processed and total_tagged counts.
     """
     try:
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_closed():
-                raise RuntimeError("closed")
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        return loop.run_until_complete(
-            _run_rules_for_session_async(
-                session_id=session_id,
-                rule_ids=rule_ids,
-            )
-        )
+        return asyncio.run(_run_rules_for_session_async(session_id=session_id, rule_ids=rule_ids))
     except Exception as exc:
         raise self.retry(exc=exc)

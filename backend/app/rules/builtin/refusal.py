@@ -14,7 +14,7 @@ class RefusalRule(BaseRule):
     rule_id = "refusal"
     name = "RefusalRule"
     description = "Detects over-aligned refusal responses."
-    priority = 20
+    priority = 22
 
     def evaluate(self, ctx: RuleContext) -> list[RuleResult]:
         answer = ctx.model_answer or ""

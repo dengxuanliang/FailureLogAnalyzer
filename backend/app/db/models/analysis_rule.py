@@ -14,8 +14,8 @@ class AnalysisRule(Base, TimestampMixin):
     field: Mapped[str] = mapped_column(String(128), nullable=False)
     condition: Mapped[dict] = mapped_column(JSONB, nullable=False)
     tags: Mapped[list[str]] = mapped_column(ARRAY(String), nullable=False, default=list)
-    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
-    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.8)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(

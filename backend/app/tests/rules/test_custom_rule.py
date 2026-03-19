@@ -122,19 +122,6 @@ def test_field_missing_fires_when_none():
     assert rule.evaluate(_ctx(extracted_code="def foo(): pass")) == []
 
 
-# ---- python_expr --------------------------------------------------------
-
-def test_python_expr_fires():
-    data = {
-        "name": "custom_expr", "field": "model_answer",
-        "condition": {"type": "python_expr", "expr": "len(value) > 5 and 'error' in value"},
-        "tags": ["格式与规范错误.输出格式不符"], "confidence": 0.9,
-    }
-    rule = CustomRule.from_dict(data)
-    assert len(rule.evaluate(_ctx(model_answer="syntax error found"))) == 1
-    assert rule.evaluate(_ctx(model_answer="ok")) == []
-
-
 # ---- CustomRuleEngine ---------------------------------------------------
 
 def test_engine_loads_yaml_file(tmp_path):
