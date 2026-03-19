@@ -3,7 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.logging import configure_logging
 from app.core.config import settings
 from app.api.v1.routers import health, auth
-from app.api.v1 import ws_progress
+from app.api.v1 import ws_progress, ingest
+import app.ingestion.adapters  # noqa: F401 — triggers adapter registration
 
 configure_logging()
 
@@ -25,3 +26,4 @@ app.add_middleware(
 app.include_router(health.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(ws_progress.router, prefix="/api/v1", tags=["realtime"])
+app.include_router(ingest.router, prefix="/api/v1")
