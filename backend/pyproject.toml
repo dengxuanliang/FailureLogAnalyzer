@@ -20,6 +20,12 @@ dependencies = [
     "redis==5.0.4",
     "structlog==24.1.0",
     "python-multipart==0.0.9",
+    "ijson==3.2.3",
+    "orjson==3.10.1",
+    "chardet==5.2.0",
+    "celery[redis]==5.3.6",
+    "watchdog==4.0.0",
+    "aiofiles==23.2.1",
 ]
 
 [project.optional-dependencies]
