@@ -395,6 +395,7 @@ priority: 10
 | llm_cost | FLOAT | 分析成本 |
 | prompt_template | VARCHAR | 使用的模板 |
 | raw_response | JSONB | LLM 原始响应 |
+| unmatched_tags | VARCHAR[] | LLM 返回但不在分类树中的标签（待人工归类）|
 | created_at | TIMESTAMP | 创建时间 |
 
 **error_tags** — 多标签错因标记
@@ -403,6 +404,7 @@ priority: 10
 |------|------|------|
 | id | UUID PK | 标签 ID |
 | record_id | UUID FK | 关联评测记录 |
+| analysis_result_id | UUID FK | 关联产出此标签的 analysis_results 记录 |
 | tag_path | VARCHAR | 标签路径，如 "推理性错误.逻辑推理.推理链断裂" |
 | tag_level | INT | 层级 (1/2/3) |
 | source | ENUM | rule / llm |
@@ -518,17 +520,20 @@ priority: 10
 - `CRUD /api/v1/llm/strategies` — 策略管理
   - `GET /api/v1/llm/strategies` — 策略列表
   - `POST /api/v1/llm/strategies` — 创建策略
-  - `PUT /api/v1/llm/strategies/{id}` — 更新策略
+  - `PUT /api/v1/llm/strategies/{id}` — 全量更新策略
+  - `PATCH /api/v1/llm/strategies/{id}` — 部分更新策略
   - `DELETE /api/v1/llm/strategies/{id}` — 删除策略
 - `CRUD /api/v1/llm/prompt-templates` — 模板管理
   - `GET /api/v1/llm/prompt-templates` — 模板列表
   - `POST /api/v1/llm/prompt-templates` — 创建模板
-  - `PUT /api/v1/llm/prompt-templates/{id}` — 更新模板
+  - `PUT /api/v1/llm/prompt-templates/{id}` — 全量更新模板
+  - `PATCH /api/v1/llm/prompt-templates/{id}` — 部分更新模板
   - `DELETE /api/v1/llm/prompt-templates/{id}` — 删除模板
 - `CRUD /api/v1/rules` — 规则管理
   - `GET /api/v1/rules` — 规则列表
   - `POST /api/v1/rules` — 创建规则
-  - `PUT /api/v1/rules/{id}` — 更新规则
+  - `PUT /api/v1/rules/{id}` — 全量更新规则
+  - `PATCH /api/v1/rules/{id}` — 部分更新规则
   - `DELETE /api/v1/rules/{id}` — 删除规则
 
 **横向分析：**
@@ -661,6 +666,19 @@ services:
 - JWT Token 认证（FastAPI + python-jose）
 - 角色信息存储在 `users` 表中
 - API 端点通过 FastAPI Depends 校验角色权限
+
+**users 表：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | UUID PK | 用户 ID |
+| username | VARCHAR UNIQUE | 用户名 |
+| email | VARCHAR UNIQUE | 邮箱 |
+| password_hash | VARCHAR | 密码哈希（bcrypt）|
+| role | ENUM | admin / analyst / viewer |
+| is_active | BOOLEAN | 是否启用 |
+| created_at | TIMESTAMP | 创建时间 |
+| updated_at | TIMESTAMP | 更新时间 |
 
 ---
 
