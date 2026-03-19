@@ -2,6 +2,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+import uuid as uuid_module
 from app.db.session import get_db
 from app.db.models.user import User
 from app.db.models.enums import UserRole
@@ -16,16 +17,17 @@ async def get_current_user(
 ) -> User:
     try:
         payload = decode_access_token(credentials.credentials)
-        user_id: str = payload.get("sub")
-        if not user_id:
+        user_id_str: str = payload.get("sub")
+        if not user_id_str:
             raise ValueError("Missing sub")
+        user_uuid = uuid_module.UUID(user_id_str)  # raises ValueError if invalid
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    result = await db.execute(select(User).where(User.id == user_id))
+    result = await db.execute(select(User).where(User.id == user_uuid))
     user = result.scalar_one_or_none()
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")

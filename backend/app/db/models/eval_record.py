@@ -28,7 +28,7 @@ class EvalRecord(Base, TimestampMixin):
     is_correct: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     score: Mapped[float | None] = mapped_column(Float, nullable=True)
     extracted_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    extra_metadata: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
     raw_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     session: Mapped["EvalSession"] = relationship(back_populates="records")
