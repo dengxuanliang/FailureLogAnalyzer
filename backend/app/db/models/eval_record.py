@@ -30,6 +30,7 @@ class EvalRecord(Base, TimestampMixin):
     extracted_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
     raw_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    dedup_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
 
     session: Mapped["EvalSession"] = relationship(back_populates="records")
     analysis_results: Mapped[list["AnalysisResult"]] = relationship(back_populates="record")
