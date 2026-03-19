@@ -61,7 +61,7 @@
 | 数据库 | PostgreSQL 15+ (分区表) |
 | 缓存/队列 | Redis |
 | 前端 | React + TypeScript + Ant Design |
-| 图表 | ECharts / Recharts |
+| 图表 | ECharts |
 | 实时通信 | WebSocket |
 | 流式解析 | ijson / orjson |
 | 部署 | Docker Compose → K8s |
@@ -124,14 +124,17 @@ class OrchestratorState(TypedDict):
     target_filters: dict
     analysis_strategy: str
 
-    # 分析结果
-    rule_results: list[TaggedRecord]
-    llm_results: list[AnalysisResult]
-    merged_results: list[dict]
+    # 分析结果（仅存引用，实际数据在 PostgreSQL）
+    rule_job_id: Optional[str]         # 规则分析任务 ID
+    llm_job_id: Optional[str]          # LLM 分析任务 ID
+    rule_summary: Optional[dict]       # 规则分析摘要（计数、分布）
+    llm_summary: Optional[dict]        # LLM 分析摘要（计数、分布）
+    analyzed_count: int                # 已分析条数
+    total_count: int                   # 总条数
 
     # 报告
-    report: Optional[Report]
-    visualizations: list[dict]
+    report_id: Optional[str]           # 报告 ID（报告内容存 DB）
+    report_status: Optional[str]       # pending/generating/done
 
     # 流程控制
     current_step: str
@@ -362,7 +365,7 @@ priority: 10
 |------|------|------|
 | id | UUID PK | 记录 ID |
 | session_id | UUID FK | 关联批次 |
-| benchmark | VARCHAR | benchmark |
+| benchmark | VARCHAR | benchmark（冗余字段，用于分区键，值与 session.benchmark 一致）|
 | task_category | VARCHAR | 任务类别 |
 | question_id | VARCHAR | 题目 ID |
 | question | TEXT | 题目内容 |
@@ -408,21 +411,75 @@ priority: 10
 
 **analysis_rules** — 用户自定义规则
 
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | UUID PK | 规则 ID |
+| name | VARCHAR | 规则名称 |
+| description | TEXT | 规则描述 |
+| field | VARCHAR | 目标字段（model_answer, extracted_code 等）|
+| condition | JSONB | 条件定义（type, pattern, threshold 等）|
+| tags | VARCHAR[] | 命中时产出的标签 |
+| confidence | FLOAT | 命中时的置信度 |
+| priority | INT | 执行优先级（越小越先执行）|
+| is_active | BOOLEAN | 是否启用 |
+| created_by | VARCHAR | 创建者 |
+| created_at | TIMESTAMP | 创建时间 |
+| updated_at | TIMESTAMP | 更新时间 |
+
 **analysis_strategies** — LLM 触发策略配置
 
-### 7.2 分区策略
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | UUID PK | 策略 ID |
+| name | VARCHAR | 策略名称 |
+| strategy_type | ENUM | full / fallback / sample / manual |
+| config | JSONB | 策略参数（sample_rate, categories, budget_limit 等）|
+| llm_provider | VARCHAR | LLM 提供商（openai / claude / local）|
+| llm_model | VARCHAR | 具体模型名 |
+| prompt_template_id | UUID FK | 关联的 Prompt 模板 |
+| max_concurrent | INT | 最大并发数 |
+| daily_budget | FLOAT | 每日预算上限（美元）|
+| is_active | BOOLEAN | 是否启用 |
+| created_by | VARCHAR | 创建者 |
+| created_at | TIMESTAMP | 创建时间 |
+| updated_at | TIMESTAMP | 更新时间 |
+
+**prompt_templates** — Prompt 模板
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | UUID PK | 模板 ID |
+| name | VARCHAR | 模板名称 |
+| benchmark | VARCHAR | 绑定的 benchmark（NULL 表示通用）|
+| template | TEXT | 模板内容（含变量占位符）|
+| version | INT | 版本号 |
+| is_active | BOOLEAN | 是否启用 |
+| created_by | VARCHAR | 创建者 |
+| created_at | TIMESTAMP | 创建时间 |
+
+### 7.2 error_tags 与 analysis_results 的关系
+
+- `analysis_results` 是分析过程的完整记录（谁分析的、根因、证据、成本等），一条 record 可有多条 analysis_results（规则一条、LLM 一条）
+- `error_tags` 是从 analysis_results 中提取的标准化标签，是查询和聚合的主要数据源
+- **写入流程**：分析完成后，系统从 analysis_results.error_types 数组中拆分出每个标签，写入 error_tags 表
+- **查询约定**：Dashboard 聚合查询走 error_tags；查看单条详情时联查 analysis_results
+
+### 7.3 分区策略
 
 - **eval_records**：按 `benchmark` LIST 分区，每个分区内按 `created_at` RANGE 子分区（按月）
-- **analysis_results**：按 `analysis_type` LIST 分区
-- **error_tags**：按 `tag_level` LIST 分区
+- **analysis_results**：按 `record_id` HASH 分区（均匀分布，默认 8 个分区）
+- **error_tags**：按 `record_id` HASH 分区（与 analysis_results 对齐，便于 JOIN）
 
-### 7.3 索引策略
+注意：跨 benchmark 查询（如横向分析）会扫描多个分区，通过查询聚合层的缓存策略优化。
+
+### 7.4 索引策略
 
 **复合索引：**
 - `(benchmark, is_correct)` — 按 benchmark 筛错题
 - `(session_id, is_correct)` — 按批次查错题
 - `(task_category)` — 按类别聚合
 - `(model_version, benchmark)` — 版本对比
+- `(question_id, model_version)` — 跨版本同题对比（版本 Diff 核心索引）
 
 **GIN 索引：** `metadata` JSONB 字段
 
@@ -459,8 +516,20 @@ priority: 10
 - `GET /api/v1/llm/jobs/{id}/status` — 任务状态
 - `GET /api/v1/llm/cost-summary` — 成本统计
 - `CRUD /api/v1/llm/strategies` — 策略管理
+  - `GET /api/v1/llm/strategies` — 策略列表
+  - `POST /api/v1/llm/strategies` — 创建策略
+  - `PUT /api/v1/llm/strategies/{id}` — 更新策略
+  - `DELETE /api/v1/llm/strategies/{id}` — 删除策略
 - `CRUD /api/v1/llm/prompt-templates` — 模板管理
+  - `GET /api/v1/llm/prompt-templates` — 模板列表
+  - `POST /api/v1/llm/prompt-templates` — 创建模板
+  - `PUT /api/v1/llm/prompt-templates/{id}` — 更新模板
+  - `DELETE /api/v1/llm/prompt-templates/{id}` — 删除模板
 - `CRUD /api/v1/rules` — 规则管理
+  - `GET /api/v1/rules` — 规则列表
+  - `POST /api/v1/rules` — 创建规则
+  - `PUT /api/v1/rules/{id}` — 更新规则
+  - `DELETE /api/v1/rules/{id}` — 删除规则
 
 **横向分析：**
 - `GET /api/v1/cross-benchmark/matrix` — 模型×Benchmark 能力矩阵
@@ -566,3 +635,117 @@ services:
 - PostgreSQL 使用 PG Operator 或托管服务
 - Redis Sentinel / Cluster
 - Ingress 统一入口
+
+---
+
+## 11. 认证与权限 (RBAC)
+
+### 11.1 用户角色
+
+| 角色 | 权限 |
+|------|------|
+| Admin | 全部权限：用户管理、系统配置、数据删除 |
+| Analyst | 上传数据、触发分析（含 LLM）、查看结果、配置规则/策略/模板、生成报告 |
+| Viewer | 只读：查看 Dashboard、浏览分析结果、导出报告 |
+
+### 11.2 关键权限控制
+
+- LLM 分析触发：Analyst 及以上（涉及成本）
+- 评测批次删除：Admin only
+- LLM API Key 管理：Admin only，Key 加密存储
+- 规则/策略/模板修改：Analyst 及以上
+- 每日预算上限由 Admin 设定，Analyst 无法超额
+
+### 11.3 实现方案
+
+- JWT Token 认证（FastAPI + python-jose）
+- 角色信息存储在 `users` 表中
+- API 端点通过 FastAPI Depends 校验角色权限
+
+---
+
+## 12. Celery 与 LangGraph 边界
+
+### 12.1 职责划分
+
+```
+LangGraph（编排层）          Celery（执行层）
+┌─────────────────┐         ┌─────────────────┐
+│ 意图识别         │         │ 文件流式解析     │
+│ 路由决策         │ ──派发→  │ 规则引擎批处理   │
+│ 状态管理         │         │ LLM API 调用     │
+│ 子图编排         │ ←回调──  │ 报告数据聚合     │
+│ Human-in-the-Loop│         │                 │
+└─────────────────┘         └─────────────────┘
+```
+
+- **LangGraph 节点**负责决策：选择哪个子图、用什么策略、是否需要用户确认
+- **Celery Task**负责执行：实际的数据处理、LLM 调用等 IO 密集型工作
+- LangGraph 节点通过 `celery_task.delay()` 派发任务，通过轮询或回调获取结果
+- LangGraph Checkpointer 持久化编排状态，Celery 的任务结果存入 PostgreSQL
+
+### 12.2 具体映射
+
+| LangGraph 节点 | 派发的 Celery Task |
+|---------------|-------------------|
+| Ingest Subgraph → ingest_node | `tasks.ingest.parse_file(file_path, adapter)` |
+| Analyze Subgraph → rule_node | `tasks.analysis.run_rules(session_id, rule_ids)` |
+| Analyze Subgraph → llm_node | `tasks.analysis.run_llm_judge(record_ids, strategy)` |
+| Report Subgraph → report_node | `tasks.report.generate_report(session_ids, config)` |
+
+---
+
+## 13. 错误处理与边界情况
+
+### 13.1 数据摄入
+
+- **重复上传检测**：基于文件 SHA256 哈希去重，同一文件重复上传时提示用户确认是否覆盖
+- **Adapter 匹配失败**：自动检测无匹配时，返回错误并提示用户手动选择 adapter 或上传新 adapter
+- **多 Adapter 匹配**：按 adapter 的 `detect()` 返回的置信度排序，取最高；若置信度相同，提示用户选择
+- **文件编码**：默认 UTF-8，检测 BOM 并自动处理；非 UTF-8 文件记录警告并尝试 chardet 自动检测
+- **损坏/截断文件**：ijson 遇到 JSON 解析错误时，记录已成功解析的条数和错误位置，向用户报告
+- **Session ID 生成**：每次文件上传/目录扫描自动生成一个 UUID 作为 session_id，同一次上传的多个文件共享同一 session_id
+
+### 13.2 LLM 分析
+
+- **API 不可用**：circuit breaker 模式，连续 5 次失败后熔断 60 秒，期间任务排队等待
+- **LLM 返回格式错误**：JSON 解析失败时重试 1 次（含格式修正 prompt），仍失败则标记 `analysis_failed` 并保存原始响应
+- **LLM 返回不存在的分类**：校验 error_types 是否在分类树中，不存在的标签记录到 `unmatched_tags` 字段，Dashboard 可查看并手动归类
+- **预算耗尽**：达到每日上限时，停止新任务派发，已在 LLM API 中的请求正常完成，用户收到通知，剩余任务标记为 `budget_exhausted` 可次日自动续跑或手动触发
+
+### 13.3 并发与数据一致性
+
+- **并发摄入**：同一 session 不允许并发摄入，通过 Redis 分布式锁保证
+- **并发分析**：同一 record 不允许同时运行多个 LLM 分析，去重检查
+- **删除保护**：删除 session 时检查是否有进行中的分析任务，有则提示用户先取消
+- **系统重启**：Celery 任务持久化在 Redis 中，重启后自动恢复；LangGraph Checkpointer 保证编排状态不丢失
+
+### 13.4 Human-in-the-Loop
+
+- **触发条件**：LLM 置信度 < 阈值（可配置，默认 0.6）时，标记为 needs_review
+- **超时处理**：工作流在 Human Loop 节点暂停，状态持久化，无超时限制，用户可随时恢复
+- **人工标注**：用户在 Dashboard 中修正错因标签，标记 source=manual，覆盖 LLM 结果
+
+---
+
+## 14. 非功能需求
+
+### 14.1 性能目标
+
+- API 响应时间：P95 < 500ms（聚合查询 < 2s）
+- 数据摄入吞吐：> 10,000 条/秒（JSONL）
+- Dashboard 首屏加载：< 3s
+- 并发支持：50+ 并发 API 请求
+
+### 14.2 数据管理
+
+- **数据保留**：默认保留全部数据，支持按 session 手动清理
+- **数据库连接池**：SQLAlchemy + pgbouncer，API 进程和 Celery Worker 共享连接池
+- **数据库迁移**：Alembic 管理 schema 变更，分类树节点重命名时提供迁移脚本自动更新 error_tags
+
+### 14.3 可观测性
+
+- **日志**：结构化日志（structlog），输出到 stdout，便于容器化环境采集
+- **指标**：Prometheus metrics（摄入速率、LLM 调用次数/成本/延迟、队列深度、API 延迟）
+- **健康检查**：`GET /api/v1/health`（API + DB + Redis + Celery Worker 状态）
+- **告警**：LLM 成本超预算 80%、Worker 全部离线、摄入任务失败率 > 10%
