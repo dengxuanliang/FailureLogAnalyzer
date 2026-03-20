@@ -37,6 +37,10 @@ module.exports = [
         describe: "readonly",
         beforeEach: "readonly",
         afterEach: "readonly",
+        ImportMetaEnv: "readonly",
+        it: "readonly",
+        jest: "readonly",
+        localStorage: "readonly",
       },
     },
     rules: {

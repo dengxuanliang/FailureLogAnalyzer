@@ -7,8 +7,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "jest",
-    "test:watch": "jest --watch",
+    "test": "node --experimental-vm-modules ./node_modules/.bin/jest",
+    "test:watch": "node --experimental-vm-modules ./node_modules/.bin/jest --watch",
     "lint": "eslint src vite.config.ts jest.config.ts setupTests.ts"
   },
   "keywords": [],
