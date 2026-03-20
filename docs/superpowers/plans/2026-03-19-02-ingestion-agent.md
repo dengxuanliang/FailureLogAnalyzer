@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Implement the Ingestion Agent — a streaming file-parsing pipeline with pluggable benchmark adapters, Celery-backed async processing, WebSocket progress reporting, and three REST endpoints for triggering and monitoring ingestion jobs.
+**Goal:** Implement the Ingestion Agent — a streaming file-parsing pipeline with pluggable benchmark adapters, Celery-backed async processing, WebSocket progress reporting, three REST endpoints for triggering and monitoring ingestion jobs, and a watchdog-based directory watcher for production auto-ingest.
 
 **Architecture:** Files are uploaded or discovered via REST endpoints; a Celery task (`tasks.ingest.parse_file`) streams each file through a benchmark-specific adapter that maps raw records to `NormalizedRecord`, buffering 1000 records per batch before writing to PostgreSQL. Progress events are published to Redis and broadcast over a FastAPI WebSocket endpoint, keeping peak memory below 256 MB regardless of file size.
 
@@ -1808,6 +1808,458 @@ Plan 1 provides:
 
 ---
 
+### TASK 11 — Watchdog directory watcher (production auto-ingest)
+
+Design doc §4.3 specifies a watchdog-based directory watcher for production environments: configure a watch directory, detect new `.json`/`.jsonl` files, and automatically trigger the ingestion pipeline.
+
+- [ ] **11.1 Write failing test**
+
+  File: `backend/tests/ingestion/test_directory_watcher.py` (Create)
+
+  ```python
+  import pytest
+  import time
+  from pathlib import Path
+  from unittest.mock import patch, MagicMock, AsyncMock, call
+
+  from app.ingestion.directory_watcher import DirectoryWatcher, IngestFileHandler
+
+
+  def test_handler_triggers_on_new_jsonl_file(tmp_path):
+      """FileSystemEventHandler should dispatch a Celery task for new .jsonl files."""
+      mock_task = MagicMock()
+      handler = IngestFileHandler(
+          dispatch_fn=mock_task,
+          benchmark="auto",
+          model="unknown",
+          model_version="unknown",
+          adapter_name=None,
+      )
+
+      from watchdog.events import FileCreatedEvent
+      event = FileCreatedEvent(str(tmp_path / "results.jsonl"))
+      handler.on_created(event)
+
+      mock_task.assert_called_once()
+      args, kwargs = mock_task.call_args
+      assert args[0] == str(tmp_path / "results.jsonl")
+      assert "job_id" in kwargs
+      assert "session_id" in kwargs
+
+
+  def test_handler_ignores_non_json_files(tmp_path):
+      """Handler should ignore .csv, .txt, and other non-JSON files."""
+      mock_task = MagicMock()
+      handler = IngestFileHandler(
+          dispatch_fn=mock_task,
+          benchmark="auto",
+          model="unknown",
+          model_version="unknown",
+      )
+
+      from watchdog.events import FileCreatedEvent
+      handler.on_created(FileCreatedEvent(str(tmp_path / "data.csv")))
+      handler.on_created(FileCreatedEvent(str(tmp_path / "readme.txt")))
+      handler.on_created(FileCreatedEvent(str(tmp_path / "image.png")))
+
+      mock_task.assert_not_called()
+
+
+  def test_handler_triggers_on_json_file(tmp_path):
+      """Handler should also accept .json files."""
+      mock_task = MagicMock()
+      handler = IngestFileHandler(
+          dispatch_fn=mock_task,
+          benchmark="auto",
+          model="unknown",
+          model_version="unknown",
+      )
+
+      from watchdog.events import FileCreatedEvent
+      handler.on_created(FileCreatedEvent(str(tmp_path / "eval.json")))
+
+      mock_task.assert_called_once()
+
+
+  def test_handler_debounces_rapid_events(tmp_path):
+      """Same file created twice within debounce window should dispatch only once."""
+      mock_task = MagicMock()
+      handler = IngestFileHandler(
+          dispatch_fn=mock_task,
+          benchmark="auto",
+          model="unknown",
+          model_version="unknown",
+          debounce_seconds=2.0,
+      )
+
+      from watchdog.events import FileCreatedEvent
+      event = FileCreatedEvent(str(tmp_path / "results.jsonl"))
+      handler.on_created(event)
+      handler.on_created(event)  # duplicate within debounce window
+
+      assert mock_task.call_count == 1
+
+
+  def test_watcher_creates_directory_if_missing(tmp_path):
+      """DirectoryWatcher should create the watch directory if it doesn't exist."""
+      watch_dir = tmp_path / "nonexistent" / "subdir"
+      watcher = DirectoryWatcher(
+          watch_dir=str(watch_dir),
+          benchmark="auto",
+          model="unknown",
+          model_version="unknown",
+      )
+      assert watch_dir.exists()
+
+
+  def test_watcher_start_stop(tmp_path):
+      """Watcher should start and stop without errors."""
+      watcher = DirectoryWatcher(
+          watch_dir=str(tmp_path),
+          benchmark="auto",
+          model="unknown",
+          model_version="unknown",
+      )
+      watcher.start()
+      assert watcher.is_running
+      watcher.stop()
+      assert not watcher.is_running
+  ```
+
+  Run: `cd backend && pytest tests/ingestion/test_directory_watcher.py -x`
+  Expected: `FAILED` (ImportError — module does not exist yet)
+
+- [ ] **11.2 Implement DirectoryWatcher + IngestFileHandler**
+
+  File: `backend/app/ingestion/directory_watcher.py` (Create)
+
+  ```python
+  from __future__ import annotations
+  import logging
+  import time
+  import uuid
+  from pathlib import Path
+  from threading import Lock
+
+  from watchdog.observers import Observer
+  from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileMovedEvent
+
+  logger = logging.getLogger(__name__)
+
+  _ALLOWED_EXTENSIONS = {".jsonl", ".json"}
+  _DEFAULT_DEBOUNCE_SECONDS = 5.0
+
+
+  class IngestFileHandler(FileSystemEventHandler):
+      """
+      Watchdog event handler that dispatches a Celery ingest task
+      when a new .json/.jsonl file appears in the watched directory.
+
+      Features:
+      - Filters by file extension (.json, .jsonl only)
+      - Debounces rapid duplicate events for the same file path
+      - Generates a unique session_id per file (or groups by parent dir)
+      """
+
+      def __init__(
+          self,
+          dispatch_fn,
+          benchmark: str = "auto",
+          model: str = "unknown",
+          model_version: str = "unknown",
+          adapter_name: str | None = None,
+          debounce_seconds: float = _DEFAULT_DEBOUNCE_SECONDS,
+      ) -> None:
+          super().__init__()
+          self._dispatch_fn = dispatch_fn
+          self._benchmark = benchmark
+          self._model = model
+          self._model_version = model_version
+          self._adapter_name = adapter_name
+          self._debounce_seconds = debounce_seconds
+          self._seen: dict[str, float] = {}  # file_path -> last_dispatch_time
+          self._lock = Lock()
+
+      def _should_process(self, file_path: str) -> bool:
+          suffix = Path(file_path).suffix.lower()
+          if suffix not in _ALLOWED_EXTENSIONS:
+              return False
+          # Debounce: skip if same path was dispatched recently
+          now = time.monotonic()
+          with self._lock:
+              last = self._seen.get(file_path, 0.0)
+              if now - last < self._debounce_seconds:
+                  logger.debug("Debounced duplicate event for %s", file_path)
+                  return False
+              self._seen[file_path] = now
+          return True
+
+      def _dispatch(self, file_path: str) -> None:
+          job_id = str(uuid.uuid4())
+          session_id = str(uuid.uuid4())
+          logger.info(
+              "Watchdog detected new file: %s → dispatching job %s",
+              file_path, job_id,
+          )
+          self._dispatch_fn(
+              file_path,
+              adapter_name=self._adapter_name,
+              job_id=job_id,
+              session_id=session_id,
+              benchmark=self._benchmark,
+              model=self._model,
+              model_version=self._model_version,
+          )
+
+      def on_created(self, event: FileCreatedEvent) -> None:
+          if event.is_directory:
+              return
+          if self._should_process(event.src_path):
+              self._dispatch(event.src_path)
+
+      def on_moved(self, event: FileMovedEvent) -> None:
+          """Handle files moved/renamed into the watched directory."""
+          if event.is_directory:
+              return
+          if self._should_process(event.dest_path):
+              self._dispatch(event.dest_path)
+
+
+  class DirectoryWatcher:
+      """
+      Manages a watchdog Observer that monitors a directory for new eval log files.
+
+      Usage:
+          watcher = DirectoryWatcher(
+              watch_dir="/data/eval-logs",
+              benchmark="auto",
+              model="unknown",
+              model_version="unknown",
+          )
+          watcher.start()
+          # ... runs in background thread ...
+          watcher.stop()
+
+      In production, start this from a dedicated CLI command or Celery beat schedule.
+      """
+
+      def __init__(
+          self,
+          watch_dir: str,
+          benchmark: str = "auto",
+          model: str = "unknown",
+          model_version: str = "unknown",
+          adapter_name: str | None = None,
+          recursive: bool = True,
+          debounce_seconds: float = _DEFAULT_DEBOUNCE_SECONDS,
+      ) -> None:
+          self._watch_dir = Path(watch_dir)
+          self._watch_dir.mkdir(parents=True, exist_ok=True)
+          self._recursive = recursive
+
+          # Default dispatch function is the Celery task;
+          # inject a different one for testing.
+          self._dispatch_fn = self._default_dispatch
+
+          self._handler = IngestFileHandler(
+              dispatch_fn=self._dispatch_fn,
+              benchmark=benchmark,
+              model=model,
+              model_version=model_version,
+              adapter_name=adapter_name,
+              debounce_seconds=debounce_seconds,
+          )
+          self._observer = Observer()
+          self._running = False
+
+      @staticmethod
+      def _default_dispatch(file_path: str, **kwargs) -> None:
+          """Dispatch via Celery task. Import here to avoid circular imports."""
+          from app.tasks.ingest import parse_file
+          parse_file.delay(file_path, **kwargs)
+
+      @property
+      def is_running(self) -> bool:
+          return self._running
+
+      def start(self) -> None:
+          if self._running:
+              return
+          self._observer.schedule(
+              self._handler,
+              str(self._watch_dir),
+              recursive=self._recursive,
+          )
+          self._observer.start()
+          self._running = True
+          logger.info("DirectoryWatcher started: watching %s", self._watch_dir)
+
+      def stop(self) -> None:
+          if not self._running:
+              return
+          self._observer.stop()
+          self._observer.join(timeout=10)
+          self._running = False
+          logger.info("DirectoryWatcher stopped")
+  ```
+
+  Run: `cd backend && pytest tests/ingestion/test_directory_watcher.py -x`
+  Expected: `6 passed`
+
+- [ ] **11.3 Add CLI command to start watcher**
+
+  File: `backend/app/cli/watch.py` (Create)
+
+  ```python
+  """
+  CLI entrypoint to run the directory watcher as a long-lived process.
+
+  Usage:
+      python -m app.cli.watch --dir /data/eval-logs --benchmark auto
+  """
+  from __future__ import annotations
+  import argparse
+  import logging
+  import signal
+  import sys
+
+  from app.ingestion.directory_watcher import DirectoryWatcher
+
+  logging.basicConfig(
+      level=logging.INFO,
+      format="%(asctime)s %(levelname)s %(name)s — %(message)s",
+  )
+  logger = logging.getLogger(__name__)
+
+
+  def main() -> None:
+      parser = argparse.ArgumentParser(description="Watch a directory for new eval log files")
+      parser.add_argument("--dir", required=True, help="Directory to watch")
+      parser.add_argument("--benchmark", default="auto", help="Benchmark name (default: auto)")
+      parser.add_argument("--model", default="unknown", help="Model identifier")
+      parser.add_argument("--model-version", default="unknown", help="Model version")
+      parser.add_argument("--adapter", default=None, help="Adapter name (default: auto-detect)")
+      parser.add_argument("--no-recursive", action="store_true", help="Don't watch subdirectories")
+      args = parser.parse_args()
+
+      watcher = DirectoryWatcher(
+          watch_dir=args.dir,
+          benchmark=args.benchmark,
+          model=args.model,
+          model_version=args.model_version,
+          adapter_name=args.adapter,
+          recursive=not args.no_recursive,
+      )
+
+      def _shutdown(signum, frame):
+          logger.info("Received signal %s, shutting down watcher...", signum)
+          watcher.stop()
+          sys.exit(0)
+
+      signal.signal(signal.SIGINT, _shutdown)
+      signal.signal(signal.SIGTERM, _shutdown)
+
+      watcher.start()
+      logger.info("Watcher running. Press Ctrl+C to stop.")
+
+      # Block main thread — Observer runs in a daemon thread
+      signal.pause()
+
+
+  if __name__ == "__main__":
+      main()
+  ```
+
+  File: `backend/app/cli/__init__.py` (Create — empty)
+
+- [ ] **11.4 Add REST endpoint for watcher management**
+
+  File: `backend/app/api/v1/ingest.py` (Modify — add watcher status/control endpoints)
+
+  Add to the existing ingest router:
+
+  ```python
+  # --- Directory Watcher management (optional, for Dashboard control) ---
+
+  _active_watcher: DirectoryWatcher | None = None
+
+
+  class WatcherStartRequest(BaseModel):
+      watch_dir: str
+      benchmark: str = "auto"
+      model: str = "unknown"
+      model_version: str = "unknown"
+      adapter_name: str | None = None
+      recursive: bool = True
+
+
+  class WatcherStatusResponse(BaseModel):
+      running: bool
+      watch_dir: str | None = None
+
+
+  @router.post("/watcher/start", response_model=WatcherStatusResponse)
+  async def start_watcher(body: WatcherStartRequest) -> WatcherStatusResponse:
+      """Start the directory watcher. Only one watcher instance per API process."""
+      global _active_watcher
+      if _active_watcher and _active_watcher.is_running:
+          raise HTTPException(
+              status_code=status.HTTP_409_CONFLICT,
+              detail="Watcher is already running",
+          )
+
+      from app.ingestion.directory_watcher import DirectoryWatcher
+      _active_watcher = DirectoryWatcher(
+          watch_dir=body.watch_dir,
+          benchmark=body.benchmark,
+          model=body.model,
+          model_version=body.model_version,
+          adapter_name=body.adapter_name,
+          recursive=body.recursive,
+      )
+      _active_watcher.start()
+      return WatcherStatusResponse(running=True, watch_dir=body.watch_dir)
+
+
+  @router.post("/watcher/stop", response_model=WatcherStatusResponse)
+  async def stop_watcher() -> WatcherStatusResponse:
+      """Stop the directory watcher."""
+      global _active_watcher
+      if not _active_watcher or not _active_watcher.is_running:
+          raise HTTPException(
+              status_code=status.HTTP_409_CONFLICT,
+              detail="No watcher is running",
+          )
+      _active_watcher.stop()
+      _active_watcher = None
+      return WatcherStatusResponse(running=False)
+
+
+  @router.get("/watcher/status", response_model=WatcherStatusResponse)
+  async def watcher_status() -> WatcherStatusResponse:
+      """Check if the directory watcher is running."""
+      if _active_watcher and _active_watcher.is_running:
+          return WatcherStatusResponse(running=True, watch_dir=str(_active_watcher._watch_dir))
+      return WatcherStatusResponse(running=False)
+  ```
+
+- [ ] **11.5 Update dependencies**
+
+  File: `backend/requirements.txt` (Modify — add if not present)
+
+  ```
+  watchdog>=4.0.0
+  ```
+
+- [ ] **11.6 Commit**
+
+  ```bash
+  git add backend/app/ingestion/directory_watcher.py backend/app/cli/ backend/tests/ingestion/test_directory_watcher.py
+  git commit -m "feat(ingestion): add watchdog directory watcher for production auto-ingest"
+  ```
+
+---
+
 ## Architecture Notes
 
 ### File Layout (new files in this plan)
@@ -1822,11 +2274,15 @@ backend/
       db_writer.py        # BatchWriter (1000-record batches)
       progress.py         # ProgressPublisher -> Redis pub/sub
       job_store.py        # Redis-backed job status (TTL 24h)
+      directory_watcher.py  # Watchdog-based directory monitoring for auto-ingest
       adapters/
         __init__.py       # auto-imports all adapters
         base.py           # BaseAdapter ABC
         registry.py       # @register_adapter, get_adapter, auto_detect_adapter
         generic_jsonl.py  # example adapter
+    cli/
+      __init__.py
+      watch.py            # CLI entrypoint: python -m app.cli.watch --dir /data/eval-logs
     tasks/
       __init__.py
       ingest.py           # @shared_task parse_file
@@ -1846,6 +2302,7 @@ backend/
       test_db_writer.py
       test_progress.py
       test_celery_task.py
+      test_directory_watcher.py
     api/
       test_ws_progress_unit.py
       test_ingest_endpoints.py
@@ -1863,6 +2320,8 @@ backend/
 
 5. **Memory bound**: `BatchWriter._buffer` holds at most 1000 `NormalizedRecord` objects (~2 KB each) = ~2 MB. `_seen_hashes` holds SHA-256 hex strings (64 bytes each); 1 million unique records = ~64 MB. Total well within 256 MB limit.
 
+6. **Watchdog directory watcher**: Runs as a separate long-lived process (CLI command or managed by the API). Uses `watchdog.Observer` in a background thread. File events are debounced (default 5s) to avoid duplicate dispatches from editors or partial writes. Each detected file gets its own `session_id` and `job_id`, dispatching to the same `parse_file` Celery task used by the REST endpoints. Supports `on_created` and `on_moved` events (covers both new files and files moved into the directory).
+
 ---
 
 ## Critical Files for Implementation
@@ -1871,4 +2330,6 @@ backend/
 - `backend/app/ingestion/adapters/registry.py` — The `@register_adapter` plugin mechanism; `auto_detect_adapter`; all future adapters depend on this
 - `backend/app/ingestion/parsers.py` — O(1) streaming parsers using `readline` and `ijson`; encoding detection via `chardet`; this is the memory-critical path
 - `backend/app/tasks/ingest.py` — Celery task wiring everything together: parser → adapter.normalize → BatchWriter → ProgressPublisher; entrypoint for all ingest operations
-- `backend/app/api/v1/ingest.py` — REST layer: file upload, directory scan, job status polling; integrates with Celery `.delay()` and Redis job store
+- `backend/app/api/v1/ingest.py` — REST layer: file upload, directory scan, job status polling, watcher management; integrates with Celery `.delay()` and Redis job store
+- `backend/app/ingestion/directory_watcher.py` — Watchdog-based directory watcher: `IngestFileHandler` (event filtering + debounce) + `DirectoryWatcher` (Observer lifecycle); dispatches to the same `parse_file` Celery task
+- `backend/app/cli/watch.py` — CLI entrypoint for running the watcher as a standalone process with signal handling

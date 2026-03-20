@@ -310,6 +310,9 @@
       records: Mapped[list["EvalRecord"]] = relationship(back_populates="session")
   ```
 - [ ] Create `backend/app/db/models/eval_record.py`:
+
+  **设计说明：** `eval_records` 按 `benchmark` LIST 分区，每个分区内再按 `created_at` 月度 RANGE 子分区（见设计文档 7.3）。SQLAlchemy ORM 仅声明主表结构和索引；实际的分区 DDL 在 Task 4.2 的手写迁移中用 `op.execute()` 执行，不依赖 autogenerate。
+
   ```python
   import uuid
   from sqlalchemy import String, Boolean, Float, Text, ForeignKey, Index
@@ -320,11 +323,29 @@
   class EvalRecord(Base, TimestampMixin):
       __tablename__ = "eval_records"
       __table_args__ = (
+          # 复合索引（设计文档 7.4）
           Index("ix_eval_records_benchmark_correct", "benchmark", "is_correct"),
           Index("ix_eval_records_session_correct", "session_id", "is_correct"),
           Index("ix_eval_records_task_category", "task_category"),
           Index("ix_eval_records_model_version_benchmark", "model_version", "benchmark"),
+          # 版本 Diff 核心索引：跨版本同题对比
           Index("ix_eval_records_question_model_version", "question_id", "model_version"),
+          # 全文搜索索引（GIN，设计文档 7.4）——声明为 postgresql_using
+          Index(
+              "ix_eval_records_question_fts",
+              "question",
+              postgresql_using="gin",
+              postgresql_ops={"question": "to_tsvector('simple', question)"},
+          ),
+          Index(
+              "ix_eval_records_model_answer_fts",
+              "model_answer",
+              postgresql_using="gin",
+              postgresql_ops={"model_answer": "to_tsvector('simple', model_answer)"},
+          ),
+          # 分区表声明（postgresql_partition_by 告知 Alembic 此表为分区父表，
+          # 实际 CREATE TABLE ... PARTITION BY LIST (benchmark) 在手写迁移中执行）
+          {"postgresql_partition_by": "LIST (benchmark)"},
       )
 
       id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -350,10 +371,13 @@
   ```
 
 ### Task 3.5 — Implement `analysis_results` and `error_tags` models
+
+  **设计说明：** `analysis_results` 和 `error_tags` 均按 `record_id` HASH 分区（8 个分区桶，见设计文档 7.3），与 `eval_records` 对齐以优化 JOIN 性能。实际分区 DDL 在 Task 4.2 手写迁移中执行。
+
 - [ ] Create `backend/app/db/models/analysis_result.py`:
   ```python
   import uuid
-  from sqlalchemy import String, Float, Text, ForeignKey, Enum as SAEnum, ARRAY
+  from sqlalchemy import String, Float, Text, ForeignKey, Index, Enum as SAEnum, ARRAY
   from sqlalchemy.dialects.postgresql import UUID, JSONB
   from sqlalchemy.orm import Mapped, mapped_column, relationship
   from app.db.models.base import Base, TimestampMixin
@@ -361,6 +385,12 @@
 
   class AnalysisResult(Base, TimestampMixin):
       __tablename__ = "analysis_results"
+      __table_args__ = (
+          # record_id 索引加速级联查询
+          Index("ix_analysis_results_record_id", "record_id"),
+          # 分区表声明（HASH 8 桶，实际 DDL 在 Task 4.2 手写迁移中执行）
+          {"postgresql_partition_by": "HASH (record_id)"},
+      )
 
       id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
       record_id: Mapped[uuid.UUID] = mapped_column(
@@ -389,7 +419,7 @@
 - [ ] Create `backend/app/db/models/error_tag.py`:
   ```python
   import uuid
-  from sqlalchemy import String, Integer, Float, ForeignKey, Enum as SAEnum
+  from sqlalchemy import String, Integer, Float, ForeignKey, Index, Enum as SAEnum
   from sqlalchemy.dialects.postgresql import UUID
   from sqlalchemy.orm import Mapped, mapped_column, relationship
   from app.db.models.base import Base, TimestampMixin
@@ -397,6 +427,14 @@
 
   class ErrorTag(Base, TimestampMixin):
       __tablename__ = "error_tags"
+      __table_args__ = (
+          # tag_path 索引加速按标签路径查询
+          Index("ix_error_tags_tag_path", "tag_path"),
+          # record_id 索引（与 analysis_results HASH 分区对齐，优化 JOIN）
+          Index("ix_error_tags_record_id", "record_id"),
+          # 分区表声明（HASH 8 桶，实际 DDL 在 Task 4.2 手写迁移中执行）
+          {"postgresql_partition_by": "HASH (record_id)"},
+      )
 
       id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
       record_id: Mapped[uuid.UUID] = mapped_column(
@@ -542,55 +580,439 @@
     ```
 - [ ] Verify env.py by running: `alembic check` (should report "No new upgrade operations detected" since no migration exists yet)
 
-### Task 4.2 — Generate initial migration
-- [ ] Ensure PostgreSQL is running (via Docker Compose started in Phase 6, or local pg).  
-  For offline generation use `--autogenerate` without DB connection:
-  ```
-  cd backend && alembic revision --autogenerate -m "initial_schema"
-  ```
-- [ ] Expected: new file created at `app/db/migrations/versions/<hash>_initial_schema.py`
-- [ ] Review generated file — verify it contains `CREATE TABLE` for all 8 tables, all ENUMs, all indexes.
-- [ ] Key things to confirm in the migration file:
-  - `user_role`, `analysis_type`, `severity_level`, `tag_source`, `strategy_type` ENUMs created
-  - `eval_sessions`, `eval_records`, `analysis_results`, `error_tags` tables with UUID PKs
-  - `analysis_rules`, `analysis_strategies`, `prompt_templates`, `users` tables
-  - All 5 composite indexes on `eval_records`
-  - FK constraints with correct `ondelete` cascade behavior
-- [ ] Commit: `git commit -m "feat: add initial Alembic migration for all 8 domain tables"`
+### Task 4.2 — Hand-write initial migration (partitioned schema)
 
-### Task 4.3 — Write migration smoke test
+  **为什么手写？** PostgreSQL 声明式分区（`PARTITION BY LIST/HASH`）的 DDL 不由 Alembic `--autogenerate` 生成。必须手写迁移文件，用 `op.execute()` 执行原始 SQL，确保分区表、子分区、GIN 索引全部正确创建。
+
+- [ ] Create migration file manually (do NOT run `--autogenerate`):
+  ```
+  cd backend && alembic revision -m "initial_schema"
+  ```
+  This creates an empty revision file at `app/db/migrations/versions/<hash>_initial_schema.py`.
+
+- [ ] Replace the generated file content with the following complete migration:
+
+  ```python
+  """initial_schema
+
+  Revision ID: 0001
+  Revises:
+  Create Date: 2026-03-19
+  """
+  from alembic import op
+  import sqlalchemy as sa
+  from sqlalchemy.dialects import postgresql
+
+  revision = "0001"
+  down_revision = None
+  branch_labels = None
+  depends_on = None
+
+
+  def upgrade() -> None:
+      # ── 1. ENUMs ──────────────────────────────────────────────────────────────
+      op.execute("CREATE TYPE user_role AS ENUM ('admin', 'analyst', 'viewer')")
+      op.execute("CREATE TYPE analysis_type AS ENUM ('rule', 'llm', 'manual')")
+      op.execute("CREATE TYPE severity_level AS ENUM ('high', 'medium', 'low')")
+      op.execute("CREATE TYPE tag_source AS ENUM ('rule', 'llm')")
+      op.execute("CREATE TYPE strategy_type AS ENUM ('full', 'fallback', 'sample', 'manual')")
+
+      # ── 2. Non-partitioned tables ─────────────────────────────────────────────
+      op.create_table(
+          "users",
+          sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+          sa.Column("username", sa.String(64), nullable=False, unique=True),
+          sa.Column("email", sa.String(256), nullable=False, unique=True),
+          sa.Column("password_hash", sa.String(256), nullable=False),
+          sa.Column("role", sa.Enum("admin", "analyst", "viewer", name="user_role"), nullable=False),
+          sa.Column("is_active", sa.Boolean, nullable=False, default=True),
+          sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+          sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+      )
+
+      op.create_table(
+          "eval_sessions",
+          sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+          sa.Column("model", sa.String(128), nullable=False),
+          sa.Column("model_version", sa.String(64), nullable=False),
+          sa.Column("benchmark", sa.String(64), nullable=False),
+          sa.Column("dataset_name", sa.String(256), nullable=True),
+          sa.Column("total_count", sa.Integer, nullable=True),
+          sa.Column("error_count", sa.Integer, nullable=True),
+          sa.Column("accuracy", sa.Float, nullable=True),
+          sa.Column("config", postgresql.JSONB, nullable=True),
+          sa.Column("tags", postgresql.ARRAY(sa.String), nullable=True),
+          sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+      )
+
+      op.create_table(
+          "prompt_templates",
+          sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+          sa.Column("name", sa.String(128), nullable=False),
+          sa.Column("benchmark", sa.String(64), nullable=True),
+          sa.Column("template", sa.Text, nullable=False),
+          sa.Column("version", sa.Integer, nullable=False, default=1),
+          sa.Column("is_active", sa.Boolean, nullable=False, default=True),
+          sa.Column("created_by", sa.String(128), nullable=True),
+          sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+      )
+
+      op.create_table(
+          "analysis_rules",
+          sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+          sa.Column("name", sa.String(128), nullable=False, unique=True),
+          sa.Column("description", sa.Text, nullable=True),
+          sa.Column("field", sa.String(128), nullable=False),
+          sa.Column("condition", postgresql.JSONB, nullable=False),
+          sa.Column("tags", postgresql.ARRAY(sa.String), nullable=False),
+          sa.Column("confidence", sa.Float, nullable=False, default=1.0),
+          sa.Column("priority", sa.Integer, nullable=False, default=100),
+          sa.Column("is_active", sa.Boolean, nullable=False, default=True),
+          sa.Column("created_by", sa.String(128), nullable=True),
+          sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+          sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+      )
+
+      op.create_table(
+          "analysis_strategies",
+          sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+          sa.Column("name", sa.String(128), nullable=False),
+          sa.Column("strategy_type", sa.Enum("full", "fallback", "sample", "manual", name="strategy_type"), nullable=False),
+          sa.Column("config", postgresql.JSONB, nullable=True),
+          sa.Column("llm_provider", sa.String(64), nullable=True),
+          sa.Column("llm_model", sa.String(128), nullable=True),
+          sa.Column("prompt_template_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("prompt_templates.id", ondelete="SET NULL"), nullable=True),
+          sa.Column("max_concurrent", sa.Integer, nullable=True),
+          sa.Column("daily_budget", sa.Float, nullable=True),
+          sa.Column("is_active", sa.Boolean, nullable=False, default=True),
+          sa.Column("created_by", sa.String(128), nullable=True),
+          sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+          sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+      )
+
+      # ── 3. eval_records — LIST partitioned by benchmark ───────────────────────
+      # 父表：PARTITION BY LIST (benchmark)
+      op.execute("""
+          CREATE TABLE eval_records (
+              id          UUID NOT NULL,
+              session_id  UUID NOT NULL REFERENCES eval_sessions(id) ON DELETE CASCADE,
+              benchmark   VARCHAR(64) NOT NULL,
+              model_version VARCHAR(64),
+              task_category VARCHAR(256),
+              question_id  VARCHAR(256),
+              question     TEXT,
+              expected_answer TEXT,
+              model_answer TEXT,
+              is_correct   BOOLEAN,
+              score        FLOAT,
+              extracted_code TEXT,
+              metadata     JSONB,
+              raw_json     JSONB,
+              created_at   TIMESTAMPTZ NOT NULL,
+              PRIMARY KEY (id, benchmark)
+          ) PARTITION BY LIST (benchmark)
+      """)
+
+      # 按常见 benchmark 创建 LIST 子分区（各分区内再按月 RANGE 子分区）
+      # mmlu
+      op.execute("""
+          CREATE TABLE eval_records_mmlu
+              PARTITION OF eval_records
+              FOR VALUES IN ('mmlu')
+              PARTITION BY RANGE (created_at)
+      """)
+      op.execute("""
+          CREATE TABLE eval_records_mmlu_2026_01
+              PARTITION OF eval_records_mmlu
+              FOR VALUES FROM ('2026-01-01') TO ('2026-02-01')
+      """)
+      op.execute("""
+          CREATE TABLE eval_records_mmlu_2026_02
+              PARTITION OF eval_records_mmlu
+              FOR VALUES FROM ('2026-02-01') TO ('2026-03-01')
+      """)
+      op.execute("""
+          CREATE TABLE eval_records_mmlu_2026_03
+              PARTITION OF eval_records_mmlu
+              FOR VALUES FROM ('2026-03-01') TO ('2026-04-01')
+      """)
+
+      # gsm8k
+      op.execute("""
+          CREATE TABLE eval_records_gsm8k
+              PARTITION OF eval_records
+              FOR VALUES IN ('gsm8k')
+              PARTITION BY RANGE (created_at)
+      """)
+      op.execute("""
+          CREATE TABLE eval_records_gsm8k_2026_01
+              PARTITION OF eval_records_gsm8k
+              FOR VALUES FROM ('2026-01-01') TO ('2026-02-01')
+      """)
+      op.execute("""
+          CREATE TABLE eval_records_gsm8k_2026_02
+              PARTITION OF eval_records_gsm8k
+              FOR VALUES FROM ('2026-02-01') TO ('2026-03-01')
+      """)
+      op.execute("""
+          CREATE TABLE eval_records_gsm8k_2026_03
+              PARTITION OF eval_records_gsm8k
+              FOR VALUES FROM ('2026-03-01') TO ('2026-04-01')
+      """)
+
+      # humaneval
+      op.execute("""
+          CREATE TABLE eval_records_humaneval
+              PARTITION OF eval_records
+              FOR VALUES IN ('humaneval')
+              PARTITION BY RANGE (created_at)
+      """)
+      op.execute("""
+          CREATE TABLE eval_records_humaneval_2026_01
+              PARTITION OF eval_records_humaneval
+              FOR VALUES FROM ('2026-01-01') TO ('2026-02-01')
+      """)
+      op.execute("""
+          CREATE TABLE eval_records_humaneval_2026_02
+              PARTITION OF eval_records_humaneval
+              FOR VALUES FROM ('2026-02-01') TO ('2026-03-01')
+      """)
+      op.execute("""
+          CREATE TABLE eval_records_humaneval_2026_03
+              PARTITION OF eval_records_humaneval
+              FOR VALUES FROM ('2026-03-01') TO ('2026-04-01')
+      """)
+
+      # bbh (BIG-Bench Hard)
+      op.execute("""
+          CREATE TABLE eval_records_bbh
+              PARTITION OF eval_records
+              FOR VALUES IN ('bbh')
+              PARTITION BY RANGE (created_at)
+      """)
+      op.execute("""
+          CREATE TABLE eval_records_bbh_2026_03
+              PARTITION OF eval_records_bbh
+              FOR VALUES FROM ('2026-03-01') TO ('2026-04-01')
+      """)
+
+      # default 分区（捕获所有未知 benchmark）
+      op.execute("""
+          CREATE TABLE eval_records_default
+              PARTITION OF eval_records
+              DEFAULT
+      """)
+
+      # ── 4. eval_records 索引（在父表上创建，自动传播到所有子分区）─────────────
+      op.execute("CREATE INDEX ix_eval_records_benchmark_correct ON eval_records (benchmark, is_correct)")
+      op.execute("CREATE INDEX ix_eval_records_session_correct ON eval_records (session_id, is_correct)")
+      op.execute("CREATE INDEX ix_eval_records_task_category ON eval_records (task_category)")
+      op.execute("CREATE INDEX ix_eval_records_model_version_benchmark ON eval_records (model_version, benchmark)")
+      op.execute("CREATE INDEX ix_eval_records_question_model_version ON eval_records (question_id, model_version)")
+
+      # GIN 索引：metadata JSONB（设计文档 7.4）
+      op.execute("CREATE INDEX ix_eval_records_metadata_gin ON eval_records USING gin (metadata)")
+
+      # GIN 全文搜索索引：question 和 model_answer（设计文档 7.4）
+      op.execute("""
+          CREATE INDEX ix_eval_records_question_fts
+              ON eval_records
+              USING gin (to_tsvector('simple', coalesce(question, '')))
+      """)
+      op.execute("""
+          CREATE INDEX ix_eval_records_model_answer_fts
+              ON eval_records
+              USING gin (to_tsvector('simple', coalesce(model_answer, '')))
+      """)
+
+      # ── 5. analysis_results — HASH partitioned by record_id (8 buckets) ───────
+      op.execute("""
+          CREATE TABLE analysis_results (
+              id               UUID NOT NULL,
+              record_id        UUID NOT NULL REFERENCES eval_records(id) ON DELETE CASCADE,
+              analysis_type    analysis_type NOT NULL,
+              error_types      TEXT[],
+              root_cause       TEXT,
+              severity         severity_level,
+              confidence       FLOAT,
+              evidence         TEXT,
+              suggestion       TEXT,
+              llm_model        VARCHAR(128),
+              llm_cost         FLOAT,
+              prompt_template  VARCHAR(256),
+              raw_response     JSONB,
+              unmatched_tags   TEXT[],
+              created_at       TIMESTAMPTZ NOT NULL,
+              PRIMARY KEY (id, record_id)
+          ) PARTITION BY HASH (record_id)
+      """)
+
+      for i in range(8):
+          op.execute(f"""
+              CREATE TABLE analysis_results_p{i}
+                  PARTITION OF analysis_results
+                  FOR VALUES WITH (modulus 8, remainder {i})
+          """)
+
+      op.execute("CREATE INDEX ix_analysis_results_record_id ON analysis_results (record_id)")
+
+      # ── 6. error_tags — HASH partitioned by record_id (8 buckets) ────────────
+      op.execute("""
+          CREATE TABLE error_tags (
+              id                  UUID NOT NULL,
+              record_id           UUID NOT NULL REFERENCES eval_records(id) ON DELETE CASCADE,
+              analysis_result_id  UUID REFERENCES analysis_results(id) ON DELETE SET NULL,
+              tag_path            VARCHAR(512) NOT NULL,
+              tag_level           INTEGER NOT NULL,
+              source              tag_source NOT NULL,
+              confidence          FLOAT,
+              created_at          TIMESTAMPTZ NOT NULL,
+              PRIMARY KEY (id, record_id)
+          ) PARTITION BY HASH (record_id)
+      """)
+
+      for i in range(8):
+          op.execute(f"""
+              CREATE TABLE error_tags_p{i}
+                  PARTITION OF error_tags
+                  FOR VALUES WITH (modulus 8, remainder {i})
+          """)
+
+      op.execute("CREATE INDEX ix_error_tags_record_id ON error_tags (record_id)")
+      op.execute("CREATE INDEX ix_error_tags_tag_path ON error_tags (tag_path)")
+
+
+  def downgrade() -> None:
+      # 删除顺序：子表 → 父表 → 依赖表（反向）
+      op.execute("DROP TABLE IF EXISTS error_tags CASCADE")
+      op.execute("DROP TABLE IF EXISTS analysis_results CASCADE")
+      op.execute("DROP TABLE IF EXISTS eval_records CASCADE")
+      op.execute("DROP TABLE IF EXISTS analysis_strategies CASCADE")
+      op.execute("DROP TABLE IF EXISTS analysis_rules CASCADE")
+      op.execute("DROP TABLE IF EXISTS prompt_templates CASCADE")
+      op.execute("DROP TABLE IF EXISTS eval_sessions CASCADE")
+      op.execute("DROP TABLE IF EXISTS users CASCADE")
+
+      op.execute("DROP TYPE IF EXISTS strategy_type")
+      op.execute("DROP TYPE IF EXISTS tag_source")
+      op.execute("DROP TYPE IF EXISTS severity_level")
+      op.execute("DROP TYPE IF EXISTS analysis_type")
+      op.execute("DROP TYPE IF EXISTS user_role")
+  ```
+
+- [ ] Commit: `git commit -m "feat: add hand-written Alembic migration with partitioned tables and GIN indexes"`
+
+### Task 4.3 — Write migration smoke test (with partition + index assertions)
 - [ ] Create `backend/app/tests/integration/test_migrations.py`:
   ```python
   """
   Smoke test: run alembic upgrade head + downgrade base against a real DB.
+  Also asserts that partitioned tables and GIN indexes were created correctly.
   Requires TEST_DATABASE_URL env var pointing to a scratch postgres DB.
   Skip if not available.
   """
   import os
   import subprocess
   import pytest
+  import psycopg2
 
   pytestmark = pytest.mark.skipif(
       not os.getenv("TEST_DATABASE_URL"),
       reason="TEST_DATABASE_URL not set — skipping migration integration test"
   )
 
+  def _sync_url(url: str) -> str:
+      """Convert asyncpg URL to psycopg2 URL for direct assertions."""
+      return url.replace("postgresql+asyncpg://", "postgresql://")
+
   def test_alembic_upgrade_and_downgrade():
-      env = {**os.environ, "DATABASE_URL": os.environ["TEST_DATABASE_URL"]}
+      db_url = os.environ["TEST_DATABASE_URL"]
+      env = {**os.environ, "DATABASE_URL": db_url}
+
       result = subprocess.run(
           ["alembic", "upgrade", "head"],
           capture_output=True, text=True, cwd="backend", env=env
       )
       assert result.returncode == 0, result.stderr
 
+      # ── Assert partitioned tables exist ───────────────────────────────────────
+      conn = psycopg2.connect(_sync_url(db_url))
+      conn.autocommit = True
+      cur = conn.cursor()
+
+      # eval_records should be a partitioned table
+      cur.execute("""
+          SELECT relkind FROM pg_class
+          WHERE relname = 'eval_records' AND relkind = 'p'
+      """)
+      assert cur.fetchone() is not None, "eval_records is not a partitioned table"
+
+      # analysis_results should be a partitioned table
+      cur.execute("""
+          SELECT relkind FROM pg_class
+          WHERE relname = 'analysis_results' AND relkind = 'p'
+      """)
+      assert cur.fetchone() is not None, "analysis_results is not a partitioned table"
+
+      # error_tags should be a partitioned table
+      cur.execute("""
+          SELECT relkind FROM pg_class
+          WHERE relname = 'error_tags' AND relkind = 'p'
+      """)
+      assert cur.fetchone() is not None, "error_tags is not a partitioned table"
+
+      # eval_records sub-partitions for known benchmarks
+      for partition in ("eval_records_mmlu", "eval_records_gsm8k", "eval_records_humaneval",
+                        "eval_records_bbh", "eval_records_default"):
+          cur.execute("SELECT relname FROM pg_class WHERE relname = %s", (partition,))
+          assert cur.fetchone() is not None, f"Missing partition: {partition}"
+
+      # analysis_results HASH sub-partitions (p0 .. p7)
+      for i in range(8):
+          cur.execute("SELECT relname FROM pg_class WHERE relname = %s", (f"analysis_results_p{i}",))
+          assert cur.fetchone() is not None, f"Missing analysis_results_p{i}"
+
+      # error_tags HASH sub-partitions (p0 .. p7)
+      for i in range(8):
+          cur.execute("SELECT relname FROM pg_class WHERE relname = %s", (f"error_tags_p{i}",))
+          assert cur.fetchone() is not None, f"Missing error_tags_p{i}"
+
+      # ── Assert GIN indexes exist ───────────────────────────────────────────────
+      for idx in (
+          "ix_eval_records_metadata_gin",
+          "ix_eval_records_question_fts",
+          "ix_eval_records_model_answer_fts",
+      ):
+          cur.execute("SELECT indexname FROM pg_indexes WHERE indexname = %s", (idx,))
+          assert cur.fetchone() is not None, f"Missing GIN index: {idx}"
+
+      cur.close()
+      conn.close()
+
+      # ── Downgrade ─────────────────────────────────────────────────────────────
       result = subprocess.run(
           ["alembic", "downgrade", "base"],
           capture_output=True, text=True, cwd="backend", env=env
       )
       assert result.returncode == 0, result.stderr
+
+      # Verify tables are gone after downgrade
+      conn = psycopg2.connect(_sync_url(db_url))
+      cur = conn.cursor()
+      cur.execute("SELECT tablename FROM pg_tables WHERE tablename = 'eval_records'")
+      assert cur.fetchone() is None, "eval_records should not exist after downgrade"
+      cur.close()
+      conn.close()
+  ```
+- [ ] Add `psycopg2-binary` to dev dependencies in `pyproject.toml`:
+  ```toml
+  dev = [
+      ...,
+      "psycopg2-binary==2.9.9",
+  ]
   ```
 - [ ] Run with real DB: `TEST_DATABASE_URL=postgresql+asyncpg://fla:fla@localhost/fla_test pytest app/tests/integration/test_migrations.py -v`
-- [ ] Expected: **PASSED** (upgrade + downgrade completes without error)
+- [ ] Expected: **PASSED** (upgrade, partition/index assertions, downgrade all pass)
 
 ---
 
@@ -823,6 +1245,300 @@
   ```
 - [ ] Run: `pytest app/tests/unit/test_auth_router.py -v` → **PASSED**
 - [ ] Commit: `git commit -m "feat: add /api/v1/auth/login endpoint"`
+
+### Task 5.6 — Write and implement user management endpoints (Admin CRUD)
+
+Design doc §11 requires Admin to manage users (create/edit/deactivate/role-assign). These endpoints complement the auth router.
+
+- [ ] Write failing test — `backend/app/tests/unit/test_users_router.py`:
+  ```python
+  import pytest
+  from httpx import AsyncClient, ASGITransport
+  from unittest.mock import AsyncMock, patch, MagicMock
+  from app.main import app
+  from app.db.models.enums import UserRole
+
+
+  def _make_admin_user():
+      user = MagicMock()
+      user.id = "admin-uuid"
+      user.username = "admin"
+      user.email = "admin@example.com"
+      user.role = UserRole.admin
+      user.is_active = True
+      return user
+
+
+  def _make_analyst_user():
+      user = MagicMock()
+      user.id = "analyst-uuid"
+      user.username = "analyst"
+      user.email = "analyst@example.com"
+      user.role = UserRole.analyst
+      user.is_active = True
+      return user
+
+
+  @pytest.mark.asyncio
+  async def test_list_users_admin_ok():
+      """Admin can list all users."""
+      mock_users = [_make_admin_user(), _make_analyst_user()]
+      with patch("app.api.v1.deps.get_current_user", return_value=_make_admin_user()), \
+           patch("app.api.v1.routers.users.list_all_users", return_value=mock_users):
+          async with AsyncClient(
+              transport=ASGITransport(app=app), base_url="http://test"
+          ) as client:
+              resp = await client.get("/api/v1/users")
+          assert resp.status_code == 200
+          assert len(resp.json()) == 2
+
+
+  @pytest.mark.asyncio
+  async def test_list_users_analyst_forbidden():
+      """Non-admin users cannot list users."""
+      with patch("app.api.v1.deps.get_current_user", return_value=_make_analyst_user()):
+          async with AsyncClient(
+              transport=ASGITransport(app=app), base_url="http://test"
+          ) as client:
+              resp = await client.get("/api/v1/users")
+          assert resp.status_code == 403
+
+
+  @pytest.mark.asyncio
+  async def test_create_user_admin_ok():
+      """Admin can create a new user."""
+      new_user = MagicMock()
+      new_user.id = "new-uuid"
+      new_user.username = "newuser"
+      new_user.email = "new@example.com"
+      new_user.role = UserRole.analyst
+      new_user.is_active = True
+      new_user.created_at = "2026-01-01T00:00:00"
+      new_user.updated_at = "2026-01-01T00:00:00"
+
+      with patch("app.api.v1.deps.get_current_user", return_value=_make_admin_user()), \
+           patch("app.api.v1.routers.users.create_user_in_db", return_value=new_user):
+          async with AsyncClient(
+              transport=ASGITransport(app=app), base_url="http://test"
+          ) as client:
+              resp = await client.post("/api/v1/users", json={
+                  "username": "newuser",
+                  "email": "new@example.com",
+                  "password": "securepass123",
+                  "role": "analyst",
+              })
+          assert resp.status_code == 201
+          assert resp.json()["username"] == "newuser"
+
+
+  @pytest.mark.asyncio
+  async def test_update_user_role():
+      """Admin can change a user's role."""
+      updated = _make_analyst_user()
+      updated.role = UserRole.viewer
+
+      with patch("app.api.v1.deps.get_current_user", return_value=_make_admin_user()), \
+           patch("app.api.v1.routers.users.update_user_in_db", return_value=updated):
+          async with AsyncClient(
+              transport=ASGITransport(app=app), base_url="http://test"
+          ) as client:
+              resp = await client.patch("/api/v1/users/analyst-uuid", json={
+                  "role": "viewer",
+              })
+          assert resp.status_code == 200
+
+
+  @pytest.mark.asyncio
+  async def test_deactivate_user():
+      """Admin can deactivate a user."""
+      deactivated = _make_analyst_user()
+      deactivated.is_active = False
+
+      with patch("app.api.v1.deps.get_current_user", return_value=_make_admin_user()), \
+           patch("app.api.v1.routers.users.update_user_in_db", return_value=deactivated):
+          async with AsyncClient(
+              transport=ASGITransport(app=app), base_url="http://test"
+          ) as client:
+              resp = await client.patch("/api/v1/users/analyst-uuid", json={
+                  "is_active": False,
+              })
+          assert resp.status_code == 200
+
+
+  @pytest.mark.asyncio
+  async def test_admin_cannot_deactivate_self():
+      """Admin cannot deactivate their own account."""
+      with patch("app.api.v1.deps.get_current_user", return_value=_make_admin_user()):
+          async with AsyncClient(
+              transport=ASGITransport(app=app), base_url="http://test"
+          ) as client:
+              resp = await client.patch("/api/v1/users/admin-uuid", json={
+                  "is_active": False,
+              })
+          assert resp.status_code == 400
+  ```
+
+- [ ] Run: `pytest app/tests/unit/test_users_router.py -v` → **FAILED**
+
+- [ ] Create `backend/app/schemas/user.py`:
+  ```python
+  from __future__ import annotations
+  from pydantic import BaseModel, EmailStr
+  from app.db.models.enums import UserRole
+
+
+  class UserResponse(BaseModel):
+      id: str
+      username: str
+      email: str
+      role: UserRole
+      is_active: bool
+      created_at: str
+      updated_at: str
+
+      model_config = {"from_attributes": True}
+
+
+  class UserCreate(BaseModel):
+      username: str
+      email: EmailStr
+      password: str
+      role: UserRole = UserRole.analyst
+
+
+  class UserUpdate(BaseModel):
+      username: str | None = None
+      email: EmailStr | None = None
+      password: str | None = None
+      role: UserRole | None = None
+      is_active: bool | None = None
+  ```
+
+- [ ] Create `backend/app/api/v1/routers/users.py`:
+  ```python
+  from fastapi import APIRouter, Depends, HTTPException, status
+  from sqlalchemy.ext.asyncio import AsyncSession
+  from sqlalchemy import select
+  from app.db.session import get_db
+  from app.db.models.user import User
+  from app.db.models.enums import UserRole
+  from app.core.auth import hash_password
+  from app.api.v1.deps import get_current_user, require_role
+  from app.schemas.user import UserCreate, UserUpdate, UserResponse
+
+  router = APIRouter(prefix="/users", tags=["users"])
+
+
+  async def list_all_users(db: AsyncSession) -> list[User]:
+      result = await db.execute(select(User).order_by(User.created_at.desc()))
+      return list(result.scalars().all())
+
+
+  async def create_user_in_db(db: AsyncSession, data: UserCreate) -> User:
+      # Check uniqueness
+      existing = await db.execute(
+          select(User).where(
+              (User.username == data.username) | (User.email == data.email)
+          )
+      )
+      if existing.scalar_one_or_none():
+          raise HTTPException(
+              status_code=status.HTTP_409_CONFLICT,
+              detail="Username or email already exists",
+          )
+      user = User(
+          username=data.username,
+          email=data.email,
+          password_hash=hash_password(data.password),
+          role=data.role,
+      )
+      db.add(user)
+      await db.commit()
+      await db.refresh(user)
+      return user
+
+
+  async def update_user_in_db(
+      db: AsyncSession, user_id: str, data: UserUpdate
+  ) -> User:
+      result = await db.execute(select(User).where(User.id == user_id))
+      user = result.scalar_one_or_none()
+      if not user:
+          raise HTTPException(
+              status_code=status.HTTP_404_NOT_FOUND,
+              detail=f"User {user_id!r} not found",
+          )
+      update_fields = data.model_dump(exclude_unset=True)
+      if "password" in update_fields:
+          update_fields["password_hash"] = hash_password(update_fields.pop("password"))
+      for field, value in update_fields.items():
+          setattr(user, field, value)
+      await db.commit()
+      await db.refresh(user)
+      return user
+
+
+  @router.get("", response_model=list[UserResponse])
+  async def list_users(
+      current_user=Depends(require_role(UserRole.admin)),
+      db: AsyncSession = Depends(get_db),
+  ):
+      """GET /api/v1/users — List all users (Admin only)."""
+      return await list_all_users(db)
+
+
+  @router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+  async def create_user(
+      body: UserCreate,
+      current_user=Depends(require_role(UserRole.admin)),
+      db: AsyncSession = Depends(get_db),
+  ):
+      """POST /api/v1/users — Create a new user (Admin only)."""
+      return await create_user_in_db(db, body)
+
+
+  @router.patch("/{user_id}", response_model=UserResponse)
+  async def update_user(
+      user_id: str,
+      body: UserUpdate,
+      current_user=Depends(require_role(UserRole.admin)),
+      db: AsyncSession = Depends(get_db),
+  ):
+      """PATCH /api/v1/users/{id} — Update user fields (Admin only)."""
+      # Prevent admin from deactivating themselves
+      if user_id == str(current_user.id) and body.is_active is False:
+          raise HTTPException(
+              status_code=status.HTTP_400_BAD_REQUEST,
+              detail="Cannot deactivate your own account",
+          )
+      return await update_user_in_db(db, user_id, body)
+
+
+  @router.get("/{user_id}", response_model=UserResponse)
+  async def get_user(
+      user_id: str,
+      current_user=Depends(require_role(UserRole.admin)),
+      db: AsyncSession = Depends(get_db),
+  ):
+      """GET /api/v1/users/{id} — Get user details (Admin only)."""
+      result = await db.execute(select(User).where(User.id == user_id))
+      user = result.scalar_one_or_none()
+      if not user:
+          raise HTTPException(
+              status_code=status.HTTP_404_NOT_FOUND,
+              detail=f"User {user_id!r} not found",
+          )
+      return user
+  ```
+
+- [ ] Register the router in `backend/app/api/v1/routers/__init__.py` (Modify):
+  ```python
+  from app.api.v1.routers import users
+  api_router.include_router(users.router)
+  ```
+
+- [ ] Run: `pytest app/tests/unit/test_users_router.py -v` → **PASSED** (6 tests)
+- [ ] Commit: `git commit -m "feat: add user management CRUD endpoints (Admin only)"`
 
 ---
 
@@ -1236,11 +1952,14 @@ FailureLogAnalyzer/
         │       └── routers/
         │           ├── __init__.py
         │           ├── auth.py
-        │           └── health.py
+        │           ├── health.py
+        │           └── users.py
         ├── core/
         │   ├── auth.py
         │   ├── config.py
         │   └── logging.py
+        ├── schemas/
+        │   └── user.py
         ├── db/
         │   ├── engine.py
         │   ├── session.py
@@ -1272,6 +1991,7 @@ FailureLogAnalyzer/
             │   ├── test_auth.py
             │   ├── test_auth_deps.py
             │   ├── test_auth_router.py
+            │   ├── test_users_router.py
             │   ├── test_health.py
             │   ├── test_main.py
             │   ├── test_logging.py
@@ -1290,6 +2010,8 @@ Plan 2 (Ingestion + Rule Engine) and Plan 3 (LLM Judge + Agent Orchestration) ca
 - **Database session**: `from app.db.session import get_db` — async SQLAlchemy session
 - **All ORM models**: `from app.db.models import EvalSession, EvalRecord, AnalysisResult, ErrorTag, AnalysisRule, AnalysisStrategy, PromptTemplate`
 - **Auth dependency**: `from app.api.v1.deps import get_current_user, require_role`
+- **User management**: `GET/POST /api/v1/users`, `GET/PATCH /api/v1/users/{id}` — Admin-only CRUD for user accounts and role assignment
+- **User schemas**: `from app.schemas.user import UserCreate, UserUpdate, UserResponse`
 - **Settings**: `from app.core.config import settings` — DATABASE_URL, REDIS_URL, SECRET_KEY
 - **Logger**: `from app.core.logging import get_logger`
 - **Router registration**: add new routers via `app.include_router(...)` in `app/main.py`
