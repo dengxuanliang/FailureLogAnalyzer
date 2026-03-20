@@ -2340,3 +2340,285 @@ Expected: Vite dev server starts on http://localhost:3000, shows login page
 git add frontend/
 git commit -m "feat(frontend): complete Plan 07 — frontend foundation & overview dashboard"
 ```
+
+---
+
+## Task 15: Real-time Notifications (§9.1)
+
+**Design doc reference:** §9.1 — "实时通知：摄入进度、LLM 分析完成等"
+
+Ingest and LLM analysis jobs are long-running Celery tasks. When they finish (or fail), the user should see an Ant Design `notification` toast without having to refresh the page. This task adds a `useJobNotifications` hook that subscribes to the existing `WS /api/v1/ws/progress` WebSocket and fires notifications for `done` / `failed` events.
+
+**Files:**
+- Create: `frontend/src/hooks/useJobNotifications.ts`
+- Create: `frontend/src/hooks/useJobNotifications.test.ts`
+- Modify: `frontend/src/layouts/AppLayout.tsx`
+- Modify: `frontend/src/locales/zh.json`
+- Modify: `frontend/src/locales/en.json`
+
+#### Steps
+
+- [ ] **Step 1: Add i18n keys**
+
+Add to `zh.json`:
+```json
+{
+  "notify.ingestDone": "摄入完成",
+  "notify.ingestDoneDesc": "批次 {{jobId}} 摄入成功，共处理 {{count}} 条记录",
+  "notify.ingestFailed": "摄入失败",
+  "notify.ingestFailedDesc": "批次 {{jobId}} 摄入出错：{{error}}",
+  "notify.llmDone": "LLM 分析完成",
+  "notify.llmDoneDesc": "共分析 {{count}} 条记录",
+  "notify.llmFailed": "LLM 分析失败",
+  "notify.llmFailedDesc": "任务 {{jobId}} 出错：{{error}}"
+}
+```
+
+Add to `en.json`:
+```json
+{
+  "notify.ingestDone": "Ingestion complete",
+  "notify.ingestDoneDesc": "Job {{jobId}} ingested {{count}} records successfully",
+  "notify.ingestFailed": "Ingestion failed",
+  "notify.ingestFailedDesc": "Job {{jobId}} errored: {{error}}",
+  "notify.llmDone": "LLM analysis complete",
+  "notify.llmDoneDesc": "Analysed {{count}} records",
+  "notify.llmFailed": "LLM analysis failed",
+  "notify.llmFailedDesc": "Job {{jobId}} errored: {{error}}"
+}
+```
+
+- [ ] **Step 2: Write failing test**
+
+Create `frontend/src/hooks/useJobNotifications.test.ts`:
+
+```typescript
+import { renderHook, act } from "@testing-library/react";
+import { useJobNotifications } from "./useJobNotifications";
+
+// Mock Ant Design notification
+const mockNotification = {
+  success: jest.fn(),
+  error: jest.fn(),
+};
+jest.mock("antd", () => ({
+  ...jest.requireActual("antd"),
+  notification: {
+    useNotification: () => [mockNotification, <div key="ctx" />],
+  },
+  App: {
+    useApp: () => ({ notification: mockNotification }),
+  },
+}));
+
+jest.mock("react-i18next", () => ({
+  useTranslation: () => ({ t: (k: string, opts?: any) => `${k}:${JSON.stringify(opts ?? {})}` }),
+}));
+
+// Shared mock WebSocket
+let mockWs: any;
+beforeEach(() => {
+  jest.clearAllMocks();
+  mockWs = {
+    readyState: 1,
+    send: jest.fn(),
+    close: jest.fn(),
+    onmessage: null as any,
+    onopen: null as any,
+    onclose: null as any,
+    onerror: null as any,
+  };
+  (global as any).WebSocket = jest.fn(() => mockWs);
+});
+
+test("fires success notification when ingest job completes", () => {
+  renderHook(() => useJobNotifications("job-123", "ingest"));
+
+  act(() => {
+    mockWs.onmessage?.({
+      data: JSON.stringify({
+        status: "done",
+        processed: 500,
+        job_id: "job-123",
+      }),
+    });
+  });
+
+  expect(mockNotification.success).toHaveBeenCalledTimes(1);
+});
+
+test("fires error notification when ingest job fails", () => {
+  renderHook(() => useJobNotifications("job-456", "ingest"));
+
+  act(() => {
+    mockWs.onmessage?.({
+      data: JSON.stringify({
+        status: "failed",
+        error: "Adapter not found",
+        job_id: "job-456",
+      }),
+    });
+  });
+
+  expect(mockNotification.error).toHaveBeenCalledTimes(1);
+});
+
+test("closes WebSocket on unmount", () => {
+  const { unmount } = renderHook(() => useJobNotifications("job-789", "ingest"));
+  unmount();
+  expect(mockWs.close).toHaveBeenCalled();
+});
+```
+
+- [ ] Run: `npx jest useJobNotifications` → **FAILED**
+
+- [ ] **Step 3: Implement `useJobNotifications.ts`**
+
+Create `frontend/src/hooks/useJobNotifications.ts`:
+
+```typescript
+// frontend/src/hooks/useJobNotifications.ts
+/**
+ * Subscribes to WS /api/v1/ws/progress?job_id=<id> and fires Ant Design
+ * notification toasts when a job finishes (status=done) or fails (status=failed).
+ *
+ * jobType: "ingest" | "llm" — controls which i18n keys are used.
+ *
+ * Usage: call this hook immediately after dispatching a Celery job and
+ * pass the returned job_id. The WebSocket is closed automatically when:
+ *   - the component unmounts, OR
+ *   - a terminal status (done/failed) is received
+ */
+import { useEffect, useRef } from "react";
+import { App } from "antd";
+import { useTranslation } from "react-i18next";
+
+const WS_BASE = (import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000/api/v1")
+  .replace(/^http/, "ws");
+
+export type JobType = "ingest" | "llm";
+
+export function useJobNotifications(jobId: string | null, jobType: JobType): void {
+  const { notification } = App.useApp();
+  const { t } = useTranslation();
+  const wsRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    if (!jobId) return;
+
+    const ws = new WebSocket(`${WS_BASE}/ws/progress?job_id=${jobId}`);
+    wsRef.current = ws;
+
+    ws.onmessage = (event: MessageEvent) => {
+      let data: any;
+      try {
+        data = JSON.parse(event.data as string);
+      } catch {
+        return;
+      }
+
+      const { status, processed, error } = data;
+
+      if (status === "done") {
+        if (jobType === "ingest") {
+          notification.success({
+            message: t("notify.ingestDone"),
+            description: t("notify.ingestDoneDesc", { jobId, count: processed ?? "?" }),
+            placement: "topRight",
+          });
+        } else {
+          notification.success({
+            message: t("notify.llmDone"),
+            description: t("notify.llmDoneDesc", { count: processed ?? "?" }),
+            placement: "topRight",
+          });
+        }
+        ws.close();
+      } else if (status === "failed") {
+        if (jobType === "ingest") {
+          notification.error({
+            message: t("notify.ingestFailed"),
+            description: t("notify.ingestFailedDesc", { jobId, error: error ?? "unknown" }),
+            placement: "topRight",
+          });
+        } else {
+          notification.error({
+            message: t("notify.llmFailed"),
+            description: t("notify.llmFailedDesc", { jobId, error: error ?? "unknown" }),
+            placement: "topRight",
+          });
+        }
+        ws.close();
+      }
+    };
+
+    ws.onerror = () => ws.close();
+
+    return () => {
+      ws.onmessage = null;
+      ws.close();
+    };
+  }, [jobId, jobType]);   // eslint-disable-line react-hooks/exhaustive-deps
+}
+```
+
+- [ ] Run: `npx jest useJobNotifications` → **PASSED** (3 tests)
+
+- [ ] **Step 4: Wrap `AppLayout` in `App` provider and export `useJobNotifications`**
+
+  Ant Design `App.useApp()` requires the component tree to be wrapped in `<App>`. Add it to `AppLayout.tsx`:
+
+  ```typescript
+  // In AppLayout.tsx — add import:
+  import { App } from "antd";
+
+  // Wrap the returned JSX:
+  return (
+    <App>
+      <Layout style={{ minHeight: "100vh" }}>
+        {/* ... existing layout ... */}
+      </Layout>
+    </App>
+  );
+  ```
+
+  > This makes `notification`, `message`, and `modal` from `App.useApp()` available anywhere inside the layout, including `ManualAnnotationModal` (Plan 08 Task 14) and `AgentChatWindow` (Plan 11).
+
+- [ ] **Step 5: Wire `useJobNotifications` into the Upload flow (Overview page)**
+
+  In `frontend/src/pages/Overview/index.tsx`, after dispatching an ingest job:
+
+  ```typescript
+  import { useJobNotifications } from "../../hooks/useJobNotifications";
+
+  // State to track active job IDs:
+  const [ingestJobId, setIngestJobId] = useState<string | null>(null);
+
+  // Start watching when a job is queued:
+  useJobNotifications(ingestJobId, "ingest");
+
+  // In the upload mutation onSuccess callback:
+  onSuccess: (data) => {
+    setIngestJobId(data.job_id);
+  }
+  ```
+
+  Similarly, wire `useJobNotifications(llmJobId, "llm")` in any component that triggers LLM analysis (e.g., RecordDetail re-analyze button from Task 14 above, or Overview analyze button from Plan 11).
+
+- [ ] **Step 6: Run tests**
+
+```bash
+cd frontend && npx jest useJobNotifications AppLayout --no-cache
+```
+Expected: all tests PASS
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add frontend/src/hooks/useJobNotifications.ts \
+       frontend/src/hooks/useJobNotifications.test.ts \
+       frontend/src/layouts/AppLayout.tsx \
+       frontend/src/locales/zh.json \
+       frontend/src/locales/en.json
+git commit -m "feat(layout): add real-time job notifications via WS progress hook"
+```
