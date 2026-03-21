@@ -20,6 +20,15 @@ def _override_auth():
     return _dep
 
 
+@pytest.fixture
+def _reset_watcher():
+    import app.api.v1.ingest as ingest_api
+
+    ingest_api._active_watcher = None
+    yield
+    ingest_api._active_watcher = None
+
+
 @pytest.mark.asyncio
 async def test_upload_returns_job_id(async_client):
     from app.main import app
@@ -133,3 +142,65 @@ async def test_directory_ingest_queues_multiple_jobs(async_client, tmp_path):
     assert resp.status_code == 202
     body = resp.json()
     assert len(body["jobs"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_watcher_start_returns_running(async_client, tmp_path, _reset_watcher):
+    from app.main import app
+
+    app.dependency_overrides[get_current_user] = _override_auth()
+    try:
+        with patch("app.api.v1.ingest.DirectoryWatcher") as mock_watcher_cls:
+            watcher = MagicMock()
+            watcher.is_running = True
+            mock_watcher_cls.return_value = watcher
+
+            resp = await async_client.post(
+                "/api/v1/ingest/watcher/start",
+                json={"watch_dir": str(tmp_path)},
+            )
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+    assert resp.status_code == 200
+    assert resp.json() == {"running": True, "watch_dir": str(tmp_path)}
+
+
+@pytest.mark.asyncio
+async def test_watcher_stop_returns_not_running(async_client, _reset_watcher):
+    from app.main import app
+    import app.api.v1.ingest as ingest_api
+
+    app.dependency_overrides[get_current_user] = _override_auth()
+    try:
+        watcher = MagicMock()
+        watcher.is_running = True
+        ingest_api._active_watcher = watcher
+
+        resp = await async_client.post("/api/v1/ingest/watcher/stop")
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+    assert resp.status_code == 200
+    assert resp.json() == {"running": False, "watch_dir": None}
+    watcher.stop.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_watcher_status_reflects_running_watcher(async_client, tmp_path, _reset_watcher):
+    from app.main import app
+    import app.api.v1.ingest as ingest_api
+
+    app.dependency_overrides[get_current_user] = _override_auth()
+    try:
+        watcher = MagicMock()
+        watcher.is_running = True
+        watcher.watch_dir = tmp_path
+        ingest_api._active_watcher = watcher
+
+        resp = await async_client.get("/api/v1/ingest/watcher/status")
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+    assert resp.status_code == 200
+    assert resp.json() == {"running": True, "watch_dir": str(tmp_path)}

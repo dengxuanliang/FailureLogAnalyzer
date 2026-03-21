@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.redis import get_redis
 from app.api.v1.deps import get_current_user
 from app.db.models.user import User
+from app.ingestion.directory_watcher import DirectoryWatcher
 from app.ingestion.job_store import create_job, get_job_status
 from app.tasks.ingest import parse_file
 
@@ -21,6 +22,7 @@ router = APIRouter(prefix="/ingest", tags=["ingestion"])
 
 _ALLOWED_EXTENSIONS = {".jsonl", ".json"}
 _UPLOAD_DIR = Path(settings.UPLOAD_DIR)  # e.g. /tmp/fla_uploads
+_active_watcher: DirectoryWatcher | None = None
 
 
 async def save_upload_file(upload: UploadFile, dest_dir: Path) -> str:
@@ -50,6 +52,20 @@ class DirectoryRequest(BaseModel):
 class DirectoryResponse(BaseModel):
     session_id: str
     jobs: list[dict]
+
+
+class WatcherStartRequest(BaseModel):
+    watch_dir: str
+    benchmark: str = "auto"
+    model: str = "unknown"
+    model_version: str = "unknown"
+    adapter_name: str | None = None
+    recursive: bool = True
+
+
+class WatcherStatusResponse(BaseModel):
+    running: bool
+    watch_dir: str | None = None
 
 
 @router.post("/upload", response_model=UploadResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -152,6 +168,58 @@ async def ingest_directory(
         jobs.append({"job_id": job_id, "file": file_path.name})
 
     return DirectoryResponse(session_id=session_id, jobs=jobs)
+
+
+@router.post("/watcher/start", response_model=WatcherStatusResponse)
+async def start_watcher(
+    body: WatcherStartRequest,
+    current_user: User = Depends(get_current_user),
+) -> WatcherStatusResponse:
+    global _active_watcher
+    if _active_watcher and _active_watcher.is_running:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Watcher is already running",
+        )
+
+    _active_watcher = DirectoryWatcher(
+        watch_dir=body.watch_dir,
+        benchmark=body.benchmark,
+        model=body.model,
+        model_version=body.model_version,
+        adapter_name=body.adapter_name,
+        recursive=body.recursive,
+    )
+    _active_watcher.start()
+    return WatcherStatusResponse(running=True, watch_dir=body.watch_dir)
+
+
+@router.post("/watcher/stop", response_model=WatcherStatusResponse)
+async def stop_watcher(
+    current_user: User = Depends(get_current_user),
+) -> WatcherStatusResponse:
+    global _active_watcher
+    if not _active_watcher or not _active_watcher.is_running:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No watcher is running",
+        )
+
+    _active_watcher.stop()
+    _active_watcher = None
+    return WatcherStatusResponse(running=False)
+
+
+@router.get("/watcher/status", response_model=WatcherStatusResponse)
+async def watcher_status(
+    current_user: User = Depends(get_current_user),
+) -> WatcherStatusResponse:
+    if _active_watcher and _active_watcher.is_running:
+        return WatcherStatusResponse(
+            running=True,
+            watch_dir=str(_active_watcher.watch_dir),
+        )
+    return WatcherStatusResponse(running=False)
 
 
 @router.get("/{job_id}/status")
