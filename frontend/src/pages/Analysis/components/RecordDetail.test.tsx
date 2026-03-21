@@ -44,10 +44,22 @@ jest.unstable_mockModule("react-i18next", () => ({
         "analysis.detail.analysisType": "分析方式",
         "analysis.detail.llmModel": "使用模型",
         "analysis.detail.llmCost": "分析成本",
+        "analysis.detail.annotate": "手动标注",
+        "analysis.detail.reanalyze": "LLM 重新分析",
       };
       return map[key] ?? key;
     },
   }),
+}));
+
+jest.unstable_mockModule("@/contexts/AuthContext", () => ({
+  useAuth: () => ({
+    user: { id: "user-1", role: "admin" },
+  }),
+}));
+
+jest.unstable_mockModule("@/hooks/useJobNotifications", () => ({
+  useJobNotifications: jest.fn(),
 }));
 
 const { default: RecordDetail } = await import("./RecordDetail");
@@ -92,6 +104,14 @@ describe("RecordDetail", () => {
     expect(screen.getByText("推理性错误.数学/计算错误.算术错误")).toBeInTheDocument();
     expect(screen.getByText("模型在简单算术计算中出错")).toBeInTheDocument();
     expect(screen.getByText("gpt-4")).toBeInTheDocument();
+  });
+
+
+  it("renders annotation and re-analyze action buttons", () => {
+    render(<RecordDetail detail={mockDetail} open={true} onClose={jest.fn()} />);
+
+    expect(screen.getByRole("button", { name: /手动标注/u })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /LLM 重新分析/u })).toBeInTheDocument();
   });
 
   it("does not render drawer content when closed", () => {

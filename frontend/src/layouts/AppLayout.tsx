@@ -1,4 +1,4 @@
-import { Layout, Menu } from "antd";
+import { App, Layout, Menu } from "antd";
 import {
   BarChartOutlined,
   BugOutlined,
@@ -58,50 +58,52 @@ export default function AppLayout() {
   };
 
   return (
-    <Layout style={{ minHeight: "100vh" }}>
-      <Sider collapsible breakpoint="lg">
-        <div
-          style={{
-            height: 48,
-            margin: 12,
-            color: "#fff",
-            fontWeight: 600,
-            fontSize: 14,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-          }}
-        >
-          {t("app.title")}
-        </div>
-        <Menu
-          theme="dark"
-          mode="inline"
-          selectedKeys={[location.pathname]}
-          items={items}
-          onClick={handleMenuClick}
-        />
-      </Sider>
-      <FilterProvider>
-        <Layout>
-          <Header
+    <App>
+      <Layout style={{ minHeight: "100vh" }}>
+        <Sider collapsible breakpoint="lg">
+          <div
             style={{
-              background: "#fff",
-              padding: "0 24px",
+              height: 48,
+              margin: 12,
+              color: "#fff",
+              fontWeight: 600,
+              fontSize: 14,
               display: "flex",
               alignItems: "center",
+              justifyContent: "center",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
             }}
           >
-            <FilterBar />
-          </Header>
-          <Content style={{ margin: 24 }}>
-            <Outlet />
-          </Content>
-        </Layout>
-      </FilterProvider>
-      <AgentChatWindow />
-    </Layout>
+            {t("app.title")}
+          </div>
+          <Menu
+            theme="dark"
+            mode="inline"
+            selectedKeys={[location.pathname]}
+            items={items}
+            onClick={handleMenuClick}
+          />
+        </Sider>
+        <FilterProvider>
+          <Layout>
+            <Header
+              style={{
+                background: "#fff",
+                padding: "0 24px",
+                display: "flex",
+                alignItems: "center",
+              }}
+            >
+              <FilterBar />
+            </Header>
+            <Content style={{ margin: 24 }}>
+              <Outlet />
+            </Content>
+          </Layout>
+        </FilterProvider>
+        <AgentChatWindow />
+      </Layout>
+    </App>
   );
 }
