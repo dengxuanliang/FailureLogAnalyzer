@@ -1,4 +1,5 @@
 from prometheus_client import Counter, Gauge, Histogram
+from unittest.mock import MagicMock, call
 
 from app.core import metrics as m
 
@@ -50,3 +51,29 @@ def test_daily_budget_used_ratio_is_gauge() -> None:
 def test_workers_online_is_gauge() -> None:
     assert isinstance(m.CELERY_WORKERS_ONLINE, Gauge)
     assert "queue" in m.CELERY_WORKERS_ONLINE._labelnames
+
+
+def test_update_queue_depths_polls_all_expected_queues() -> None:
+    redis = MagicMock()
+    redis.llen.side_effect = [1, 2, 3, 4]
+    gauge = MagicMock()
+
+    original = m.CELERY_QUEUE_DEPTH
+    try:
+        m.CELERY_QUEUE_DEPTH = gauge
+        m.update_queue_depths(redis)
+    finally:
+        m.CELERY_QUEUE_DEPTH = original
+
+    assert redis.llen.call_args_list == [
+        call("celery"),
+        call("rule"),
+        call("llm"),
+        call("report"),
+    ]
+    assert gauge.labels.call_args_list == [
+        call(queue="celery"),
+        call(queue="rule"),
+        call(queue="llm"),
+        call(queue="report"),
+    ]

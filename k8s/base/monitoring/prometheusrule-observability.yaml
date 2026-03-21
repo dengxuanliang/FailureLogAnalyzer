@@ -1,0 +1,42 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: failure-log-analyzer-observability
+  labels:
+    app.kubernetes.io/name: failure-log-analyzer
+spec:
+  groups:
+    - name: failure-log-analyzer.observability
+      rules:
+        - alert: FailureLogAnalyzerCeleryWorkersOffline
+          expr: max(fla_celery_workers_online) == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "FailureLogAnalyzer Celery workers offline"
+            description: "No Celery workers are reporting online for 5m."
+        - alert: FailureLogAnalyzerIngestFailureRateHigh
+          expr: |
+            (
+              sum(rate(fla_ingest_failures_total[10m]))
+              /
+              clamp_min(
+                sum(rate(fla_ingest_records_total[10m])),
+                1
+              )
+            ) > 0.10
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "FailureLogAnalyzer ingest failure rate is high"
+            description: "Ingest failures are above 10% over the past 10m."
+        - alert: FailureLogAnalyzerLLMBudgetUsageHigh
+          expr: fla_llm_daily_budget_used_ratio >= 0.8
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "FailureLogAnalyzer LLM budget usage above 80%"
+            description: "Daily LLM budget usage has exceeded 80%."

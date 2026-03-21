@@ -12,6 +12,11 @@ from app.ingestion.parsers import parse_jsonl, parse_large_json
 from app.ingestion.progress import ProgressPublisher
 from app.db.session import get_async_session
 from app.core.redis import get_redis
+from app.core.metrics import (
+    INGEST_BYTES_TOTAL,
+    INGEST_FAILURES_TOTAL,
+    INGEST_RECORDS_TOTAL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +60,11 @@ async def _run_parse(
     parser = _get_parser(file_path)
     redis = await get_redis()
     publisher = ProgressPublisher(redis=redis, job_id=job_id)
+    try:
+        file_size = Path(file_path).stat().st_size
+    except OSError:
+        file_size = 0
+    INGEST_BYTES_TOTAL.labels(benchmark=benchmark).inc(file_size)
 
     processed = 0
     start_time = time.monotonic()
@@ -76,13 +86,17 @@ async def _run_parse(
                             "parse_file[%s]: adapter.normalize failed at record %d — %s",
                             job_id, processed, exc,
                         )
+                        INGEST_RECORDS_TOTAL.labels(status="normalize_error").inc()
+                        INGEST_FAILURES_TOTAL.inc()
                         continue
 
                     if record is None:
+                        INGEST_RECORDS_TOTAL.labels(status="skipped").inc()
                         continue
 
                     await writer.add(record)
                     processed += 1
+                    INGEST_RECORDS_TOTAL.labels(status="written").inc()
 
                     if processed % _PROGRESS_EVERY_N == 0:
                         elapsed = time.monotonic() - start_time
@@ -106,6 +120,7 @@ async def _run_parse(
         }
 
     except Exception as exc:
+        INGEST_FAILURES_TOTAL.inc()
         await publisher.fail(reason=str(exc))
         logger.exception("parse_file[%s] failed: %s", job_id, exc)
         raise

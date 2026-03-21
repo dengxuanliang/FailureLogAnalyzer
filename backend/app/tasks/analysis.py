@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 import uuid
@@ -37,6 +38,7 @@ from app.rules.base import RuleContext, RuleResult
 from app.rules.custom import CustomRule
 from app.rules.registry import RuleRegistry
 
+logger = logging.getLogger(__name__)
 
 # -----------------------------------------------------------------------
 # Pure logic helpers (testable without Celery/DB)
@@ -73,6 +75,8 @@ async def _run_rules_for_session_async(
     Core async batch logic: reads eval_records for session_id, runs rules,
     writes analysis_results + error_tags. Returns summary dict.
     """
+    started = time.monotonic()
+
     async with get_async_session() as db:
         # 1. Load active custom rules from DB and merge into registry
         registry = RuleRegistry.default()
@@ -160,11 +164,22 @@ async def _run_rules_for_session_async(
             await db.commit()
             offset += batch_size
 
-    return {
+    result = {
         "session_id": session_id,
         "total_processed": total_processed,
         "total_tagged": total_tagged,
     }
+    logger.info(
+        "run_rules completed",
+        extra={
+            "session_id": session_id,
+            "rule_ids": rule_ids,
+            "total_processed": total_processed,
+            "total_tagged": total_tagged,
+            "duration_seconds": round(time.monotonic() - started, 6),
+        },
+    )
+    return result
 
 
 # -----------------------------------------------------------------------
@@ -186,8 +201,10 @@ def run_rules(self, session_id: str, rule_ids: Optional[list[str]] = None) -> di
         Summary dict with total_processed and total_tagged counts.
     """
     try:
+        logger.info("run_rules task started", extra={"session_id": session_id, "rule_ids": rule_ids})
         return asyncio.run(_run_rules_for_session_async(session_id=session_id, rule_ids=rule_ids))
     except Exception as exc:
+        logger.exception("run_rules task failed", extra={"session_id": session_id, "rule_ids": rule_ids})
         raise self.retry(exc=exc)
 
 

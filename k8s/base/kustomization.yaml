@@ -28,3 +28,4 @@ resources:
   - redis/configmap.yaml
   - ingress/ingress.yaml
   - ingress/certificate.yaml
+  - monitoring

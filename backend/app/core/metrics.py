@@ -74,6 +74,6 @@ HTTP_REQUEST_DURATION_SECONDS = Histogram(
 
 def update_queue_depths(redis_client) -> None:
     """Poll Redis queue lengths and update queue-depth gauge."""
-    for queue in ("rule", "llm", "report"):
+    for queue in ("celery", "rule", "llm", "report"):
         depth = redis_client.llen(queue)
         CELERY_QUEUE_DEPTH.labels(queue=queue).set(depth)
