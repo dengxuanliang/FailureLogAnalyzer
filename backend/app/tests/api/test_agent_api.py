@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
@@ -42,7 +42,7 @@ async def test_agent_chat_new_conversation(
 ) -> None:
     with patch("app.api.v1.routers.agent.get_graph") as mock_get_graph:
         mock_graph = MagicMock()
-        mock_graph.invoke.return_value = {
+        mock_graph.ainvoke = AsyncMock(return_value={
             "user_input": "查看概览",
             "intent": "query",
             "conversation_history": [
@@ -51,7 +51,7 @@ async def test_agent_chat_new_conversation(
             ],
             "current_step": "query_done",
             "needs_human_input": False,
-        }
+        })
         mock_get_graph.return_value = mock_graph
 
         resp = await async_client.post(
@@ -75,7 +75,7 @@ async def test_agent_chat_with_existing_conversation(
 ) -> None:
     with patch("app.api.v1.routers.agent.get_graph") as mock_get_graph:
         mock_graph = MagicMock()
-        mock_graph.invoke.return_value = {
+        mock_graph.ainvoke = AsyncMock(return_value={
             "user_input": "错误分布",
             "intent": "query",
             "conversation_history": [
@@ -84,7 +84,7 @@ async def test_agent_chat_with_existing_conversation(
             ],
             "current_step": "query_done",
             "needs_human_input": False,
-        }
+        })
         mock_get_graph.return_value = mock_graph
 
         resp = await async_client.post(

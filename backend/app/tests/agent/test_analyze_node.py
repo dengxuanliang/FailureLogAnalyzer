@@ -59,3 +59,21 @@ def test_analyze_node_does_not_mutate_input_state() -> None:
 
     assert state["errors"] == original_errors
     assert state["current_step"] == "start"
+
+
+def test_analyze_node_uses_filter_session_id_fallback() -> None:
+    state = create_initial_state(user_input="分析 session-2")
+    state["target_session_ids"] = []
+    state["target_filters"] = {"session_id": "session-2"}
+
+    with patch("app.agent.nodes.analyze_node.run_rules") as mock_rules:
+        mock_result = MagicMock()
+        mock_result.id = "job-filter-2"
+        mock_rules.apply_async.return_value = mock_result
+
+        updates = analyze_node(state, config={})
+
+    assert updates["current_step"] == "rule_analysis_dispatched"
+    mock_rules.apply_async.assert_called_once_with(
+        kwargs={"session_id": "session-2", "rule_ids": None}
+    )

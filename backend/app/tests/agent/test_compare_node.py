@@ -1,8 +1,13 @@
 """Tests for the compare subgraph node."""
-from unittest.mock import MagicMock, patch
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.agent.nodes.compare_node import compare_node
 from app.agent.state import create_initial_state
+
+
+async def _run_compare(state: dict, config: dict) -> dict:
+    return await compare_node(state, config)
 
 
 def test_compare_node_calls_service() -> None:
@@ -15,25 +20,33 @@ def test_compare_node_calls_service() -> None:
 
     mock_db = MagicMock()
     config = {"configurable": {"db": mock_db}}
-    with patch("app.agent.nodes.compare_node.compare_versions") as mock_cmp:
+    with patch("app.agent.nodes.compare_node.compare_versions", new_callable=AsyncMock) as mock_cmp:
         mock_cmp.return_value = {
             "version_a": "v1",
             "version_b": "v2",
             "benchmark": None,
-            "metrics_a": {"total": 100, "errors": 30, "accuracy": 0.7},
-            "metrics_b": {"total": 100, "errors": 20, "accuracy": 0.8},
+            "sessions_a": 2,
+            "sessions_b": 2,
+            "accuracy_a": 0.7,
+            "accuracy_b": 0.8,
+            "accuracy_delta": 0.1,
+            "error_rate_a": 0.3,
+            "error_rate_b": 0.2,
+            "error_rate_delta": -0.1,
         }
-        with patch("app.agent.nodes.compare_node.get_version_diff") as mock_diff:
+        with patch("app.agent.nodes.compare_node.get_version_diff", new_callable=AsyncMock) as mock_diff:
             mock_diff.return_value = {
                 "regressed": [],
                 "improved": [],
                 "new_errors": [],
-                "resolved_errors": [],
+                "fixed_errors": [],
             }
-            updates = compare_node(state, config)
+            updates = asyncio.run(_run_compare(state, config))
 
     assert updates["current_step"] == "compare_done"
     assert any(m["role"] == "assistant" for m in updates["conversation_history"])
+    mock_cmp.assert_awaited_once()
+    mock_diff.assert_awaited_once()
 
 
 def test_compare_node_errors_on_missing_versions() -> None:
@@ -41,7 +54,7 @@ def test_compare_node_errors_on_missing_versions() -> None:
     state["target_filters"] = {}
 
     config = {"configurable": {"db": MagicMock()}}
-    updates = compare_node(state, config)
+    updates = asyncio.run(_run_compare(state, config))
 
     assert len(updates["errors"]) > 0
     assert updates["current_step"] == "error"
@@ -53,6 +66,6 @@ def test_compare_node_does_not_mutate_input_state() -> None:
     original_step = state["current_step"]
 
     config = {"configurable": {"db": MagicMock()}}
-    compare_node(state, config)
+    asyncio.run(_run_compare(state, config))
 
     assert state["current_step"] == original_step

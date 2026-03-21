@@ -11,6 +11,14 @@ def analyze_node(state: OrchestratorState, config: dict[str, Any]) -> dict:
     """Dispatch rule analysis for the target session."""
     session_ids = state.get("target_session_ids", [])
     if not session_ids:
+        filters = state.get("target_filters", {})
+        fallback_ids = filters.get("session_ids")
+        if isinstance(fallback_ids, list) and fallback_ids:
+            session_ids = [str(item) for item in fallback_ids]
+        elif filters.get("session_id"):
+            session_ids = [str(filters["session_id"])]
+
+    if not session_ids:
         return {
             "errors": ["Analyze failed: no target_session_ids specified"],
             "current_step": "error",

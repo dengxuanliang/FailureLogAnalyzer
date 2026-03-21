@@ -45,7 +45,7 @@ async def agent_chat(
         state["target_filters"].update(payload.filters)
 
     graph = get_graph()
-    result = graph.invoke(
+    result = await graph.ainvoke(
         state,
         config={"configurable": {"thread_id": conv_id, "db": db}},
     )
@@ -99,7 +99,7 @@ async def agent_websocket(
 
             async with AsyncSessionLocal() as db:
                 graph = get_graph()
-                result = graph.invoke(
+                result = await graph.ainvoke(
                     state,
                     config={"configurable": {"thread_id": conv_id, "db": db}},
                 )
