@@ -1,0 +1,45 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgres
+spec:
+  instances: 3
+
+  postgresql:
+    parameters:
+      max_connections: "200"
+      shared_buffers: "256MB"
+      effective_cache_size: "1GB"
+      work_mem: "16MB"
+      maintenance_work_mem: "128MB"
+      wal_level: logical
+      max_wal_senders: "10"
+
+  storage:
+    size: 50Gi
+    storageClass: standard
+
+  superuserSecret:
+    name: fla-postgres
+
+  bootstrap:
+    initdb:
+      database: fla
+      owner: fla
+      secret:
+        name: fla-postgres
+
+  monitoring:
+    enablePodMonitor: true
+
+  backup:
+    retentionPolicy: 7d
+    barmanObjectStore:
+      destinationPath: s3://your-bucket/postgres-backups/
+      s3Credentials:
+        accessKeyId:
+          name: fla-s3
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: fla-s3
+          key: SECRET_ACCESS_KEY

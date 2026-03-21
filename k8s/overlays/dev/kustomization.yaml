@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: fla-dev
+
+resources:
+  - ../../base
+
+patches:
+  - path: patches/api-replicas.yaml
+  - path: patches/worker-replicas.yaml
+
+images:
+  - name: ghcr.io/org/fla-api
+    newName: localhost:5000/fla-api
+    newTag: dev
+  - name: ghcr.io/org/fla-frontend
+    newName: localhost:5000/fla-frontend
+    newTag: dev
