@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     ENVIRONMENT: str = "development"
+    LOG_LEVEL: str = "INFO"
     CORS_ORIGINS: List[str] = ["http://localhost:3000"]
     UPLOAD_DIR: str = "/tmp/fla_uploads"
 

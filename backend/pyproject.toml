@@ -19,6 +19,7 @@ dependencies = [
     "pydantic-settings==2.2.1",
     "redis==5.0.4",
     "structlog==24.1.0",
+    "prometheus-client==0.20.0",
     "python-multipart==0.0.9",
     "ijson==3.2.3",
     "orjson==3.10.1",
