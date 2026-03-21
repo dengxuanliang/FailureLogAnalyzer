@@ -1,6 +1,14 @@
-import pytest
-from unittest.mock import MagicMock
+import uuid
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
+from app.db.models.analysis_result import AnalysisResult
+from app.db.models.analysis_strategy import AnalysisStrategy
+from app.db.models.enums import StrategyType
+from app.db.models.error_tag import ErrorTag
+from app.db.models.prompt_template import PromptTemplate
 from app.llm.providers.base import BaseLlmProvider, LlmResponse
 from app.tasks.analysis import _FORMAT_REPAIR_SUFFIX, _analyse_single_record
 
@@ -47,6 +55,37 @@ def _make_record(**kwargs):
     for key, value in defaults.items():
         setattr(record, key, value)
     return record
+
+
+class _FakeDb:
+    def __init__(self, strategy: AnalysisStrategy, template: PromptTemplate):
+        self._strategy = strategy
+        self._template = template
+        self.added: list[object] = []
+        self.commits = 0
+
+    async def get(self, model, pk):
+        if model is AnalysisStrategy and pk == self._strategy.id:
+            return self._strategy
+        if model is PromptTemplate and pk == self._template.id:
+            return self._template
+        return None
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    async def flush(self):
+        for obj in self.added:
+            if getattr(obj, "id", None) is None:
+                setattr(obj, "id", uuid.uuid4())
+
+    async def commit(self):
+        self.commits += 1
+
+
+class _FakeRedis:
+    async def publish(self, *_args, **_kwargs):
+        return None
 
 
 @pytest.mark.asyncio
@@ -116,3 +155,132 @@ async def test_analyse_single_record_returns_failure_when_parse_still_fails():
     assert result["raw_response"] == "still bad"
     assert result["prompt_tokens"] == 3
     assert result["completion_tokens"] == 4
+
+
+@pytest.mark.asyncio
+async def test_run_llm_judge_pipeline_persists_results(monkeypatch):
+    from app.tasks import analysis as analysis_task
+
+    session_id = uuid.uuid4()
+    strategy = AnalysisStrategy(
+        id=uuid.uuid4(),
+        name="default",
+        strategy_type=StrategyType.full,
+        config={"requests_per_minute": 10_000},
+        llm_provider="openai",
+        llm_model="gpt-4o",
+        prompt_template_id=uuid.uuid4(),
+        max_concurrent=1,
+        daily_budget=1.0,
+        is_active=True,
+        created_by="tester",
+    )
+    template = PromptTemplate(
+        id=strategy.prompt_template_id,
+        name="t1",
+        benchmark="mmlu",
+        template="Q:{question} A:{model_answer}",
+        version=1,
+        is_active=True,
+        created_by="tester",
+    )
+    fake_db = _FakeDb(strategy, template)
+
+    records = [
+        _make_record(id=uuid.uuid4(), question="Q1", model_answer="A1", expected_answer="E1"),
+        _make_record(id=uuid.uuid4(), question="Q2", model_answer="A2", expected_answer="E2"),
+    ]
+
+    provider = StubProvider([
+        LlmResponse(text=VALID_RESPONSE, prompt_tokens=10, completion_tokens=5, model="gpt-4o"),
+        LlmResponse(text=VALID_RESPONSE, prompt_tokens=11, completion_tokens=6, model="gpt-4o"),
+    ])
+
+    @asynccontextmanager
+    async def _fake_session_cm():
+        yield fake_db
+
+    monkeypatch.setattr(analysis_task, "get_async_session", _fake_session_cm)
+    monkeypatch.setattr(analysis_task, "get_redis", AsyncMock(return_value=_FakeRedis()))
+    monkeypatch.setattr(analysis_task, "update_job", AsyncMock(return_value={}))
+    monkeypatch.setattr(analysis_task, "create_provider", lambda **_kwargs: provider)
+    monkeypatch.setattr(analysis_task, "select_records", AsyncMock(return_value=records))
+    monkeypatch.setattr(analysis_task, "_fetch_ruled_record_ids", AsyncMock(return_value=set()))
+    monkeypatch.setattr(
+        analysis_task,
+        "_fetch_rule_tags_map",
+        AsyncMock(return_value={str(records[0].id): ["推理性错误.数学/计算错误.算术错误"]}),
+    )
+    monkeypatch.setattr(analysis_task, "_get_existing_daily_spend", AsyncMock(return_value=0.0))
+
+    summary = await analysis_task._run_llm_judge_for_session_async(
+        session_id=str(session_id),
+        strategy_id=str(strategy.id),
+        job_id=str(uuid.uuid4()),
+    )
+
+    assert summary["processed"] == 2
+    assert summary["succeeded"] == 2
+    assert summary["failed"] == 0
+    assert summary["total_cost"] > 0
+
+    analysis_rows = [obj for obj in fake_db.added if isinstance(obj, AnalysisResult)]
+    tag_rows = [obj for obj in fake_db.added if isinstance(obj, ErrorTag)]
+    assert len(analysis_rows) == 2
+    assert len(tag_rows) == 2
+
+
+@pytest.mark.asyncio
+async def test_run_llm_judge_pipeline_stops_when_budget_exhausted(monkeypatch):
+    from app.tasks import analysis as analysis_task
+
+    session_id = uuid.uuid4()
+    strategy = AnalysisStrategy(
+        id=uuid.uuid4(),
+        name="budget-stop",
+        strategy_type=StrategyType.full,
+        config={"requests_per_minute": 10_000},
+        llm_provider="openai",
+        llm_model="gpt-4o",
+        prompt_template_id=uuid.uuid4(),
+        max_concurrent=1,
+        daily_budget=0.1,
+        is_active=True,
+        created_by="tester",
+    )
+    template = PromptTemplate(
+        id=strategy.prompt_template_id,
+        name="t1",
+        benchmark="mmlu",
+        template="Q:{question} A:{model_answer}",
+        version=1,
+        is_active=True,
+        created_by="tester",
+    )
+    fake_db = _FakeDb(strategy, template)
+
+    @asynccontextmanager
+    async def _fake_session_cm():
+        yield fake_db
+
+    monkeypatch.setattr(analysis_task, "get_async_session", _fake_session_cm)
+    monkeypatch.setattr(analysis_task, "get_redis", AsyncMock(return_value=_FakeRedis()))
+    monkeypatch.setattr(analysis_task, "update_job", AsyncMock(return_value={}))
+    monkeypatch.setattr(analysis_task, "create_provider", lambda **_kwargs: StubProvider([]))
+    monkeypatch.setattr(
+        analysis_task,
+        "select_records",
+        AsyncMock(return_value=[_make_record(id=uuid.uuid4(), question="Q", model_answer="A")]),
+    )
+    monkeypatch.setattr(analysis_task, "_fetch_ruled_record_ids", AsyncMock(return_value=set()))
+    monkeypatch.setattr(analysis_task, "_fetch_rule_tags_map", AsyncMock(return_value={}))
+    monkeypatch.setattr(analysis_task, "_get_existing_daily_spend", AsyncMock(return_value=0.1))
+
+    summary = await analysis_task._run_llm_judge_for_session_async(
+        session_id=str(session_id),
+        strategy_id=str(strategy.id),
+        job_id=str(uuid.uuid4()),
+    )
+
+    assert summary["processed"] == 0
+    assert summary["stop_reason"] == "budget_exhausted"
