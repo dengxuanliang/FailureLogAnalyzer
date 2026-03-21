@@ -34,6 +34,7 @@ module.exports = [
         atob: "readonly",
         btoa: "readonly",
         URLSearchParams: "readonly",
+        Element: "readonly",
         HTMLFormElement: "readonly",
         __dirname: "readonly",
         test: "readonly",
