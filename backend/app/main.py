@@ -6,6 +6,7 @@ from app.api.v1 import ingest, ws_progress
 from app.api.v1.rules import router as rules_router
 from app.api.v1.routers import auth, health
 from app.api.v1.routers import metrics as metrics_router
+from app.api.v1.routers.agent import router as agent_router
 from app.api.v1.routers.analysis import router as analysis_router
 from app.api.v1.routers.compare import router as compare_router
 from app.api.v1.routers.cross_benchmark import router as cross_benchmark_router
@@ -40,6 +41,7 @@ app.include_router(auth.router, prefix="/api/v1")
 app.include_router(ws_progress.router, prefix="/api/v1", tags=["realtime"])
 app.include_router(ingest.router, prefix="/api/v1")
 app.include_router(rules_router, prefix="/api/v1")
+app.include_router(agent_router, prefix="/api/v1")
 app.include_router(llm_router, prefix="/api/v1")
 app.include_router(analysis_router, prefix="/api/v1")
 app.include_router(compare_router, prefix="/api/v1")
