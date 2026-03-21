@@ -16,6 +16,11 @@ from app.db.models.analysis_result import AnalysisResult
 from app.db.models.error_tag import ErrorTag
 from app.db.models.analysis_rule import AnalysisRule
 from app.db.models.enums import AnalysisType, TagSource
+from app.llm.cost_calculator import estimate_cost
+from app.llm.output_parser import parse_llm_response
+from app.llm.prompt_renderer import render_prompt
+from app.llm.providers.base import BaseLlmProvider, LlmResponse
+from app.llm.schemas import PromptContext
 
 
 # -----------------------------------------------------------------------
@@ -165,3 +170,113 @@ def run_rules(self, session_id: str, rule_ids: Optional[list[str]] = None) -> di
         return asyncio.run(_run_rules_for_session_async(session_id=session_id, rule_ids=rule_ids))
     except Exception as exc:
         raise self.retry(exc=exc)
+
+# -----------------------------------------------------------------------
+# LLM Judge helper path (Plan 04 milestone)
+# -----------------------------------------------------------------------
+
+_FORMAT_REPAIR_SUFFIX = "\n\nIMPORTANT: Respond with valid JSON only. No markdown, no explanation."
+
+
+async def _call_llm_with_retry(
+    provider: BaseLlmProvider,
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    max_attempts: int = 3,
+    base_backoff_seconds: float = 0.2,
+) -> LlmResponse:
+    """Call provider with lightweight exponential retry for transient API failures."""
+    delay = base_backoff_seconds
+    last_exc: Exception | None = None
+    for attempt in range(max_attempts):
+        try:
+            return await provider.call(system_prompt=system_prompt, user_prompt=user_prompt)
+        except Exception as exc:  # pragma: no cover - behavior exercised through caller
+            last_exc = exc
+            if attempt == max_attempts - 1:
+                break
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 2.0)
+
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("LLM call failed without exception")
+
+
+async def _analyse_single_record(
+    record: object,
+    provider: BaseLlmProvider,
+    template: str,
+    system_prompt: str,
+    rule_tags: list[str],
+) -> dict:
+    """Run one record through render -> provider -> parse and return normalized payload."""
+    context = PromptContext(
+        question=getattr(record, "question", "") or "",
+        expected=getattr(record, "expected_answer", "") or "",
+        model_answer=getattr(record, "model_answer", "") or "",
+        rule_tags=rule_tags,
+        task_category=getattr(record, "task_category", "") or "",
+    )
+    user_prompt = render_prompt(template, context)
+
+    first = await _call_llm_with_retry(
+        provider=provider,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+    )
+
+    parsed = parse_llm_response(first.text)
+    final_response = first
+    prompt_tokens = first.prompt_tokens
+    completion_tokens = first.completion_tokens
+
+    if not parsed.success:
+        repaired = await _call_llm_with_retry(
+            provider=provider,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt + _FORMAT_REPAIR_SUFFIX,
+        )
+        final_response = repaired
+        prompt_tokens += repaired.prompt_tokens
+        completion_tokens += repaired.completion_tokens
+        parsed = parse_llm_response(repaired.text)
+
+    llm_cost = estimate_cost(
+        model=final_response.model,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+    )
+
+    if not parsed.success:
+        return {
+            "success": False,
+            "record_id": str(getattr(record, "id", "")),
+            "raw_response": final_response.text,
+            "error": parsed.error,
+            "llm_cost": llm_cost,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "model": final_response.model,
+        }
+
+    output = parsed.output
+    assert output is not None
+    return {
+        "success": True,
+        "record_id": str(getattr(record, "id", "")),
+        "error_types": output.error_types,
+        "root_cause": output.root_cause,
+        "severity": output.severity.value,
+        "confidence": output.confidence,
+        "evidence": output.evidence,
+        "suggestion": output.suggestion,
+        "unmatched_tags": parsed.unmatched_tags,
+        "llm_cost": llm_cost,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "model": final_response.model,
+        "raw_response": final_response.text,
+    }
+
