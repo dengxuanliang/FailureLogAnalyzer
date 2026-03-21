@@ -5,6 +5,8 @@ import type {
   AnalysisSummary,
   DistributionItem,
   GlobalFilters,
+  PaginatedRecords,
+  RecordDetail,
 } from "@/types/api";
 
 const filterParams = (filters: GlobalFilters): Record<string, string> => {
@@ -48,6 +50,7 @@ export function useAnalysisSummary() {
 
 export function useErrorDistribution(
   groupBy: "error_type" | "category" | "severity",
+  errorType?: string,
 ) {
   const filters = useGlobalFilters();
 
@@ -55,6 +58,7 @@ export function useErrorDistribution(
     queryKey: [
       "errorDistribution",
       groupBy,
+      errorType,
       filters.benchmark,
       filters.model_version,
       filters.time_range_start,
@@ -66,6 +70,7 @@ export function useErrorDistribution(
         {
           params: {
             group_by: groupBy,
+            ...(errorType ? { error_type: errorType } : {}),
             ...filterParams(filters),
           },
         },
@@ -73,5 +78,53 @@ export function useErrorDistribution(
 
       return data;
     },
+  });
+}
+
+interface UseErrorRecordsParams {
+  page: number;
+  size: number;
+  errorType?: string | null;
+}
+
+export function useErrorRecords({ page, size, errorType }: UseErrorRecordsParams) {
+  const filters = useGlobalFilters();
+
+  return useQuery({
+    queryKey: [
+      "errorRecords",
+      page,
+      size,
+      errorType,
+      filters.benchmark,
+      filters.model_version,
+      filters.time_range_start,
+      filters.time_range_end,
+    ],
+    queryFn: async () => {
+      const { data } = await apiClient.get<PaginatedRecords>("/analysis/records", {
+        params: {
+          page,
+          size,
+          ...(errorType ? { error_type: errorType } : {}),
+          ...filterParams(filters),
+        },
+      });
+
+      return data;
+    },
+  });
+}
+
+export function useRecordDetail(recordId: string | null) {
+  return useQuery({
+    queryKey: ["recordDetail", recordId],
+    queryFn: async () => {
+      const { data } = await apiClient.get<RecordDetail>(
+        `/analysis/records/${recordId}/detail`,
+      );
+      return data;
+    },
+    enabled: Boolean(recordId),
   });
 }

@@ -5,7 +5,12 @@ import { MemoryRouter } from "react-router-dom";
 import { jest } from "@jest/globals";
 import apiClient from "../client";
 import { FilterProvider } from "@/contexts/FilterContext";
-import { useAnalysisSummary, useErrorDistribution } from "./analysis";
+import {
+  useAnalysisSummary,
+  useErrorDistribution,
+  useErrorRecords,
+  useRecordDetail,
+} from "./analysis";
 
 const createWrapper = (entry = "/") => {
   const queryClient = new QueryClient({
@@ -62,7 +67,7 @@ describe("analysis query hooks", () => {
     });
   });
 
-  it("fetches error distribution with the selected group and filters", async () => {
+  it("fetches error distribution with error_type drill-down and filters", async () => {
     const distribution = [
       { label: "推理性错误", count: 10, percentage: 50 },
       { label: "格式与规范错误", count: 10, percentage: 50 },
@@ -72,9 +77,12 @@ describe("analysis query hooks", () => {
       .spyOn(apiClient, "get")
       .mockResolvedValueOnce({ data: distribution } as Awaited<ReturnType<typeof apiClient.get>>);
 
-    const { result } = renderHook(() => useErrorDistribution("error_type"), {
-      wrapper: createWrapper("/?benchmark=ceval&model_version=v2.0"),
-    });
+    const { result } = renderHook(
+      () => useErrorDistribution("error_type", "推理性错误"),
+      {
+        wrapper: createWrapper("/?benchmark=ceval&model_version=v2.0"),
+      },
+    );
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
@@ -82,9 +90,88 @@ describe("analysis query hooks", () => {
     expect(getSpy).toHaveBeenCalledWith("/analysis/error-distribution", {
       params: {
         group_by: "error_type",
+        error_type: "推理性错误",
         benchmark: "ceval",
         model_version: "v2.0",
       },
     });
+  });
+
+  it("fetches paginated error records", async () => {
+    const records = {
+      items: [
+        {
+          id: "rec-1",
+          session_id: "sess-1",
+          benchmark: "mmlu",
+          task_category: "math",
+          question_id: "q1",
+          question: "What is 2+2?",
+          is_correct: false,
+          score: 0,
+          error_tags: ["推理性错误.数学/计算错误"],
+          has_llm_analysis: true,
+        },
+      ],
+      total: 1,
+      page: 1,
+      size: 20,
+    };
+
+    const getSpy = jest
+      .spyOn(apiClient, "get")
+      .mockResolvedValueOnce({ data: records } as Awaited<ReturnType<typeof apiClient.get>>);
+
+    const { result } = renderHook(
+      () => useErrorRecords({ page: 1, size: 20, errorType: "推理性错误" }),
+      {
+        wrapper: createWrapper("/?benchmark=mmlu&model_version=v1.0"),
+      },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual(records);
+    expect(getSpy).toHaveBeenCalledWith("/analysis/records", {
+      params: {
+        page: 1,
+        size: 20,
+        error_type: "推理性错误",
+        benchmark: "mmlu",
+        model_version: "v1.0",
+      },
+    });
+  });
+
+  it("fetches record detail by id", async () => {
+    const detail = {
+      record: { id: "rec-1", question: "What is 2+2?" },
+      analysis_results: [],
+      error_tags: [],
+    };
+
+    const getSpy = jest
+      .spyOn(apiClient, "get")
+      .mockResolvedValueOnce({ data: detail } as Awaited<ReturnType<typeof apiClient.get>>);
+
+    const { result } = renderHook(() => useRecordDetail("rec-1"), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(result.current.data).toEqual(detail);
+    expect(getSpy).toHaveBeenCalledWith("/analysis/records/rec-1/detail");
+  });
+
+  it("does not fetch record detail when id is null", async () => {
+    const getSpy = jest.spyOn(apiClient, "get");
+
+    const { result } = renderHook(() => useRecordDetail(null), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.fetchStatus).toBe("idle"));
+    expect(getSpy).not.toHaveBeenCalled();
   });
 });
