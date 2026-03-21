@@ -24,3 +24,17 @@ class StrategyType(str, enum.Enum):
     fallback = "fallback"
     sample = "sample"
     manual = "manual"
+
+
+class ReportType(str, enum.Enum):
+    summary = "summary"
+    comparison = "comparison"
+    cross_benchmark = "cross_benchmark"
+    custom = "custom"
+
+
+class ReportStatus(str, enum.Enum):
+    pending = "pending"
+    generating = "generating"
+    done = "done"
+    failed = "failed"

@@ -1,6 +1,6 @@
 from app.db.models import (
     User, EvalSession, EvalRecord, AnalysisResult,
-    ErrorTag, AnalysisRule, AnalysisStrategy, PromptTemplate,
+    ErrorTag, AnalysisRule, AnalysisStrategy, PromptTemplate, Report,
 )
 
 def test_all_models_importable():
@@ -12,6 +12,7 @@ def test_all_models_importable():
     assert AnalysisRule.__tablename__ == "analysis_rules"
     assert AnalysisStrategy.__tablename__ == "analysis_strategies"
     assert PromptTemplate.__tablename__ == "prompt_templates"
+    assert Report.__tablename__ == "reports"
 
 def test_user_columns():
     cols = {c.name for c in User.__table__.columns}
