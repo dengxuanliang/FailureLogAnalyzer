@@ -10,11 +10,15 @@ import { useTranslation } from "react-i18next";
 import { useAnalysisSummary, useErrorDistribution } from "@/api/queries/analysis";
 import { useTrends } from "@/api/queries/trends";
 import StatCard from "@/components/StatCard";
+import { useAgentChat } from "@/hooks/useAgentChat";
+import { useGlobalFilters } from "@/hooks/useGlobalFilters";
 import ErrorTypeDonut from "./components/ErrorTypeDonut";
 import TrendChart from "./components/TrendChart";
 
 export default function Overview() {
   const { t } = useTranslation();
+  const { send, setIsOpen } = useAgentChat();
+  const filters = useGlobalFilters();
   const summary = useAnalysisSummary();
   const distribution = useErrorDistribution("error_type");
   const trends = useTrends();
@@ -49,9 +53,22 @@ export default function Overview() {
   }
 
   const data = summary.data;
+  const handleAnalyze = () => {
+    setIsOpen(true);
+    send(
+      `Analyze current evaluation errors. benchmark: ${filters.benchmark ?? "all"}, model version: ${filters.model_version ?? "all"}`,
+    );
+  };
 
   return (
     <>
+      <Row justify="end" style={{ marginBottom: 16 }}>
+        <Col>
+          <Button type="primary" onClick={handleAnalyze}>
+            {t("overview.analyze")}
+          </Button>
+        </Col>
+      </Row>
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} md={8} lg={4} xl={4}>
           <StatCard

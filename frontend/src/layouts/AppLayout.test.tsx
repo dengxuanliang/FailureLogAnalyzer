@@ -61,6 +61,10 @@ jest.unstable_mockModule("@/components/FilterBar", () => ({
   default: () => <div data-testid="filter-bar-mock">filter bar</div>,
 }));
 
+jest.unstable_mockModule("@/components/AgentChatWindow", () => ({
+  default: () => <button type="button">Agent Chat</button>,
+}));
+
 const { default: AppLayout } = await import("./AppLayout");
 
 describe("AppLayout", () => {
@@ -76,6 +80,7 @@ describe("AppLayout", () => {
     expect(screen.getByText("退出")).toBeInTheDocument();
     expect(screen.getByTestId("filter-bar-mock")).toBeInTheDocument();
     expect(screen.getByTestId("outlet-mock")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Agent Chat" })).toBeInTheDocument();
 
     await userEvent.click(screen.getByText("错因分析"));
     expect(mockNavigate).toHaveBeenCalledWith("/analysis");

@@ -158,6 +158,144 @@ export interface SystematicWeaknesses {
   weaknesses: Weakness[];
 }
 
+export interface MatrixCell {
+  model_version: string;
+  benchmark: string;
+  error_rate: number;
+  error_count: number;
+  total_count: number;
+}
+
+export interface CrossBenchmarkMatrix {
+  model_versions: string[];
+  benchmarks: string[];
+  cells: MatrixCell[];
+}
+
+export interface CommonErrorPattern {
+  error_type: string;
+  affected_benchmarks: string[];
+  avg_error_rate: number;
+  record_count: number;
+}
+
+export interface WeaknessReport {
+  generated_at: string;
+  summary: string;
+  common_patterns: CommonErrorPattern[];
+}
+
+// === Analysis Config ===
+
+export type RuleConditionType =
+  | "regex"
+  | "contains"
+  | "not_contains"
+  | "length_gt"
+  | "length_lt"
+  | "field_equals"
+  | "field_missing"
+  | "python_expr";
+
+export interface RuleCondition {
+  type: RuleConditionType;
+  pattern?: string;
+  value?: string | number;
+  threshold?: number;
+}
+
+export interface AnalysisRule {
+  id: string;
+  name: string;
+  description: string;
+  field: string;
+  condition: RuleCondition;
+  tags: string[];
+  confidence: number;
+  priority: number;
+  is_active: boolean;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type AnalysisRuleCreate = Omit<
+  AnalysisRule,
+  "id" | "created_by" | "created_at" | "updated_at"
+>;
+export type AnalysisRuleUpdate = Partial<AnalysisRuleCreate>;
+
+export type LLMStrategyType = "full" | "fallback" | "sample" | "manual";
+
+export interface AnalysisStrategy {
+  id: string;
+  name: string;
+  strategy_type: LLMStrategyType;
+  config: Record<string, unknown>;
+  llm_provider: string;
+  llm_model: string;
+  prompt_template_id: string | null;
+  max_concurrent: number;
+  daily_budget: number;
+  is_active: boolean;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type AnalysisStrategyCreate = Omit<
+  AnalysisStrategy,
+  "id" | "created_by" | "created_at" | "updated_at"
+>;
+export type AnalysisStrategyUpdate = Partial<AnalysisStrategyCreate>;
+
+export interface PromptTemplate {
+  id: string;
+  name: string;
+  benchmark: string | null;
+  template: string;
+  version: number;
+  is_active: boolean;
+  created_by: string;
+  created_at: string;
+}
+
+export type PromptTemplateCreate = Omit<
+  PromptTemplate,
+  "id" | "version" | "created_by" | "created_at"
+>;
+export type PromptTemplateUpdate = Partial<PromptTemplateCreate>;
+
+export interface BenchmarkAdapter {
+  name: string;
+  description: string;
+  detected_fields: string[];
+  is_builtin: boolean;
+}
+
+export type UserRole = "admin" | "analyst" | "viewer";
+
+export interface UserInfo {
+  id: string;
+  username: string;
+  email: string;
+  role: UserRole;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UserCreate {
+  username: string;
+  email: string;
+  password: string;
+  role: UserRole;
+}
+
+export type UserUpdate = Partial<Omit<UserCreate, "username">> & {
+  is_active?: boolean;
+};
+
 // === Global Filters ===
 
 export interface GlobalFilters {

@@ -4,7 +4,7 @@ import type { ActionPayload, ChatMessage } from "../types/agent";
 
 const mockSocketSend = jest.fn<(_payload: unknown) => boolean>();
 const mockDisconnect = jest.fn();
-const mockMutate = jest.fn();
+const mockMutate: any = jest.fn();
 let socketHandlers: {
   onToken: (token: string) => void;
   onMessage: (message: ChatMessage) => void;
@@ -114,7 +114,7 @@ describe("useAgentChat", () => {
   it("falls back to the REST mutation when websocket send is unavailable", () => {
     mockSocketSend.mockReturnValue(false);
     mockMutate.mockImplementation(
-      (
+      ((
         _payload: unknown,
         options: {
           onSuccess?: (data: {
@@ -138,7 +138,7 @@ describe("useAgentChat", () => {
           ],
           action: { type: "navigate", page: "analysis" },
         });
-      },
+      }) as any,
     );
 
     const { result } = renderHook(() => useAgentChat(), { wrapper });

@@ -2,8 +2,13 @@ import { jest } from "@jest/globals";
 import { render, screen } from "@testing-library/react";
 
 jest.unstable_mockModule("echarts-for-react", () => ({
-  default: (props: { option: unknown }) => (
-    <div data-testid="echarts-mock">{JSON.stringify(props.option)}</div>
+  default: (props: { option: unknown; onEvents?: Record<string, unknown> }) => (
+    <div
+      data-testid="echarts-mock"
+      data-events={JSON.stringify(Object.keys(props.onEvents ?? {}))}
+    >
+      {JSON.stringify(props.option)}
+    </div>
   ),
 }));
 
@@ -24,5 +29,19 @@ describe("EChartsWrapper", () => {
     );
 
     expect(container.querySelector(".ant-skeleton")).toBeInTheDocument();
+  });
+
+  it("passes chart events through", () => {
+    render(
+      <EChartsWrapper
+        option={{}}
+        onEvents={{ click: () => undefined, mouseover: () => undefined }}
+      />,
+    );
+
+    expect(screen.getByTestId("echarts-mock")).toHaveAttribute(
+      "data-events",
+      JSON.stringify(["click", "mouseover"]),
+    );
   });
 });

@@ -1,9 +1,9 @@
 import { jest } from "@jest/globals";
 import { fireEvent, render, screen } from "@testing-library/react";
 
-const mockUseErrorDistribution = jest.fn();
-const mockUseErrorRecords = jest.fn();
-const mockUseRecordDetail = jest.fn();
+const mockUseErrorDistribution: any = jest.fn();
+const mockUseErrorRecords: any = jest.fn();
+const mockUseRecordDetail: any = jest.fn();
 
 jest.unstable_mockModule("react-i18next", () => ({
   useTranslation: () => ({
@@ -60,16 +60,16 @@ describe("Analysis page", () => {
   beforeEach(() => {
     jest.clearAllMocks();
 
-    mockUseErrorDistribution.mockImplementation((_groupBy: string, errorType?: string) => ({
+    mockUseErrorDistribution.mockImplementation(((_groupBy: string, errorType?: string) => ({
       data: errorType === "格式与规范错误"
         ? [{ label: "数学/计算错误", count: 10, percentage: 50 }]
         : [{ label: "格式与规范错误", count: 42, percentage: 30 }],
       isLoading: false,
       isError: false,
       refetch: jest.fn(),
-    }));
+    })) as any);
 
-    mockUseErrorRecords.mockImplementation(({ errorType }: { errorType?: string }) => ({
+    mockUseErrorRecords.mockImplementation((({ errorType }: { errorType?: string }) => ({
       data: {
         items: [
           {
@@ -91,9 +91,9 @@ describe("Analysis page", () => {
       },
       isLoading: false,
       isError: false,
-    }));
+    })) as any);
 
-    mockUseRecordDetail.mockImplementation((recordId: string | null) => ({
+    mockUseRecordDetail.mockImplementation(((recordId: string | null) => ({
       data: recordId
         ? {
             record: { id: recordId },
@@ -102,7 +102,7 @@ describe("Analysis page", () => {
           }
         : null,
       isLoading: false,
-    }));
+    })) as any);
   });
 
   it("renders the page and wires drill-down and detail state", () => {

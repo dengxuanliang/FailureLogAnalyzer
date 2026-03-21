@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { type ReactNode } from "react";
 import { jest } from "@jest/globals";
@@ -8,6 +9,8 @@ import "@/i18n";
 const mockUseAnalysisSummary = jest.fn();
 const mockUseErrorDistribution = jest.fn();
 const mockUseTrends = jest.fn();
+const mockSend = jest.fn();
+const mockSetIsOpen = jest.fn();
 const originalMatchMedia = window.matchMedia;
 
 jest.unstable_mockModule("echarts-for-react", () => ({
@@ -21,6 +24,22 @@ jest.unstable_mockModule("@/api/queries/analysis", () => ({
 
 jest.unstable_mockModule("@/api/queries/trends", () => ({
   useTrends: mockUseTrends,
+}));
+
+jest.unstable_mockModule("@/hooks/useAgentChat", () => ({
+  useAgentChat: () => ({
+    send: mockSend,
+    setIsOpen: mockSetIsOpen,
+  }),
+}));
+
+jest.unstable_mockModule("@/hooks/useGlobalFilters", () => ({
+  useGlobalFilters: () => ({
+    benchmark: "mmlu",
+    model_version: "v2.0",
+    time_range_start: null,
+    time_range_end: null,
+  }),
 }));
 
 const { default: Overview } = await import("./index");
@@ -111,6 +130,7 @@ describe("Overview page", () => {
     expect(screen.getByText("Accuracy")).toBeInTheDocument();
     expect(screen.getByText("LLM Analysed")).toBeInTheDocument();
     expect(screen.getByText("LLM Cost")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Analyze" })).toBeInTheDocument();
   });
 
   it("renders stat values and chart titles", () => {
@@ -120,5 +140,16 @@ describe("Overview page", () => {
     expect(screen.getByText("300")).toBeInTheDocument();
     expect(screen.getByText("Error Rate Trend")).toBeInTheDocument();
     expect(screen.getByText("L1 Error Type Distribution")).toBeInTheDocument();
+  });
+
+  it("opens agent chat and sends analyze instruction", async () => {
+    render(<Overview />, { wrapper: createWrapper() });
+
+    await userEvent.click(screen.getByRole("button", { name: "Analyze" }));
+
+    expect(mockSetIsOpen).toHaveBeenCalledWith(true);
+    expect(mockSend).toHaveBeenCalledWith(
+      "Analyze current evaluation errors. benchmark: mmlu, model version: v2.0",
+    );
   });
 });

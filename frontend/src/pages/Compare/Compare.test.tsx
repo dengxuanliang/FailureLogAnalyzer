@@ -1,10 +1,10 @@
 import { jest } from "@jest/globals";
 import { fireEvent, render, screen } from "@testing-library/react";
 
-const mockUseSessions = jest.fn();
-const mockUseVersionComparison = jest.fn();
-const mockUseVersionDiff = jest.fn();
-const mockUseRadarData = jest.fn();
+const mockUseSessions: any = jest.fn();
+const mockUseVersionComparison: any = jest.fn();
+const mockUseVersionDiff: any = jest.fn();
+const mockUseRadarData: any = jest.fn();
 
 const originalMatchMedia = window.matchMedia;
 
@@ -97,18 +97,18 @@ describe("Compare page", () => {
       isLoading: false,
     });
 
-    mockUseVersionComparison.mockImplementation((versionA: string | null, versionB: string | null) => ({
+    mockUseVersionComparison.mockImplementation(((versionA: string | null, versionB: string | null) => ({
       data: versionA && versionB ? comparison : null,
       isLoading: false,
-    }));
-    mockUseVersionDiff.mockImplementation((versionA: string | null, versionB: string | null) => ({
+    })) as any);
+    mockUseVersionDiff.mockImplementation(((versionA: string | null, versionB: string | null) => ({
       data: versionA && versionB ? diff : null,
       isLoading: false,
-    }));
-    mockUseRadarData.mockImplementation((versionA: string | null, versionB: string | null) => ({
+    })) as any);
+    mockUseRadarData.mockImplementation(((versionA: string | null, versionB: string | null) => ({
       data: versionA && versionB ? radarData : null,
       isLoading: false,
-    }));
+    })) as any);
   });
 
   it("renders the selector and empty prompt before versions are chosen", () => {

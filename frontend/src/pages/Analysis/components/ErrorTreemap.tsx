@@ -1,5 +1,6 @@
 import { ArrowLeftOutlined } from "@ant-design/icons";
 import { Button, Card, Skeleton, Space } from "antd";
+import type { EChartsOption } from "echarts";
 import { useTranslation } from "react-i18next";
 import EChartsWrapper from "../../../components/EChartsWrapper";
 import type { DistributionItem } from "../../../types/api";
@@ -23,10 +24,12 @@ export default function ErrorTreemap({
 }: ErrorTreemapProps) {
   const { t } = useTranslation();
 
-  const option = {
+  const option: EChartsOption = {
     tooltip: {
-      formatter: (params: { name: string; value: number }) =>
-        `${params.name}<br/>${t("analysis.errorCount")}: ${params.value}`,
+      formatter: (params) => {
+        const payload = params as { name?: string; value?: number };
+        return `${payload.name ?? ""}<br/>${t("analysis.errorCount")}: ${payload.value ?? 0}`;
+      },
     },
     series: [
       {

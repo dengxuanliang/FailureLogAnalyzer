@@ -16,10 +16,6 @@ interface HeatmapChartProps {
   onCellClick: (payload: HeatmapCellClickPayload) => void;
 }
 
-interface HeatmapClickParams {
-  value?: [number, number, number];
-}
-
 export default function HeatmapChart({
   matrix,
   loading,
@@ -51,12 +47,13 @@ export default function HeatmapChart({
 
   const option: EChartsOption = {
     tooltip: {
-      formatter: (params: { value?: [number, number, number] }) => {
-        if (!params.value) {
+      formatter: (params) => {
+        const tuple = ((params as { value?: unknown }).value ?? []) as number[];
+        if (tuple.length < 3) {
           return "";
         }
 
-        const [benchmarkIndex, versionIndex, rate] = params.value;
+        const [benchmarkIndex, versionIndex, rate] = tuple;
 
         return [
           `${t("cross.heatmap.yAxisLabel")}: ${matrix.model_versions[versionIndex]}`,
@@ -94,8 +91,9 @@ export default function HeatmapChart({
         data: seriesData,
         label: {
           show: true,
-          formatter: (params: { value?: [number, number, number] }) => {
-            const rate = params.value?.[2] ?? 0;
+          formatter: (params) => {
+            const tuple = ((params as { value?: unknown }).value ?? []) as number[];
+            const rate = tuple[2] ?? 0;
             return `${(rate * 100).toFixed(0)}%`;
           },
         },
@@ -103,12 +101,13 @@ export default function HeatmapChart({
     ],
   };
 
-  const handleCellClick = (params: HeatmapClickParams) => {
-    if (!params.value) {
+  const handleCellClick = (params: { value?: unknown }) => {
+    const tuple = (params.value ?? []) as number[];
+    if (tuple.length < 3) {
       return;
     }
 
-    const [benchmarkIndex, versionIndex, error_rate] = params.value;
+    const [benchmarkIndex, versionIndex, error_rate] = tuple;
 
     onCellClick({
       benchmark: matrix.benchmarks[benchmarkIndex],

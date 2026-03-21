@@ -1,8 +1,7 @@
-import { FloatButton, Layout, Menu } from "antd";
+import { Layout, Menu } from "antd";
 import {
   BarChartOutlined,
   BugOutlined,
-  CommentOutlined,
   DashboardOutlined,
   LogoutOutlined,
   SettingOutlined,
@@ -10,6 +9,7 @@ import {
 } from "@ant-design/icons";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import AgentChatWindow from "@/components/AgentChatWindow";
 import FilterBar from "@/components/FilterBar";
 import { useAuth } from "@/contexts/AuthContext";
 import { FilterProvider } from "@/contexts/FilterContext";
@@ -101,7 +101,7 @@ export default function AppLayout() {
           </Content>
         </Layout>
       </FilterProvider>
-      <FloatButton icon={<CommentOutlined />} tooltip="Agent Chat" />
+      <AgentChatWindow />
     </Layout>
   );
 }
