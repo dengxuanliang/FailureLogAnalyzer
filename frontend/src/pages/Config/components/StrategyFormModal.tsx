@@ -58,13 +58,20 @@ export default function StrategyFormModal({
     });
   }, [form, open, strategy]);
 
+  const handleSubmit = async () => {
+    const values = await form.validateFields();
+    await onSubmit({
+      ...values,
+      prompt_template_id: values.prompt_template_id ?? null,
+      config: {},
+    });
+  };
+
   return (
     <Modal
       open={open}
       title={strategy ? t("config.strategies.edit") : t("config.strategies.create")}
-      onOk={() =>
-        void form.validateFields().then((values) => onSubmit({ ...values, config: {} }))
-      }
+      onOk={() => void handleSubmit()}
       onCancel={onCancel}
       confirmLoading={loading}
       okText={t("common.save")}

@@ -31,17 +31,21 @@ describe("compare query hooks", () => {
   });
 
   it("useVersionComparison fetches comparison data and includes benchmark when present", async () => {
-    const mockData: VersionComparison = {
+    const backendPayload = {
       version_a: "v1.0",
       version_b: "v2.0",
       benchmark: "mmlu",
-      metrics_a: { total: 100, errors: 30, accuracy: 0.7, error_type_distribution: {} },
-      metrics_b: { total: 100, errors: 20, accuracy: 0.8, error_type_distribution: {} },
+      sessions_a: 10,
+      sessions_b: 10,
+      accuracy_a: 0.7,
+      accuracy_b: 0.8,
+      error_rate_a: 0.3,
+      error_rate_b: 0.2,
     };
 
     const getSpy = jest
       .spyOn(apiClient, "get")
-      .mockResolvedValueOnce({ data: mockData } as Awaited<ReturnType<typeof apiClient.get>>);
+      .mockResolvedValueOnce({ data: backendPayload } as Awaited<ReturnType<typeof apiClient.get>>);
 
     const { result } = renderHook(() => useVersionComparison("v1.0", "v2.0"), {
       wrapper: createWrapper("/?benchmark=mmlu"),
@@ -49,7 +53,15 @@ describe("compare query hooks", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    expect(result.current.data).toEqual(mockData);
+    const expected: VersionComparison = {
+      version_a: "v1.0",
+      version_b: "v2.0",
+      benchmark: "mmlu",
+      metrics_a: { total: 10, errors: 3, accuracy: 0.7, error_type_distribution: {} },
+      metrics_b: { total: 10, errors: 2, accuracy: 0.8, error_type_distribution: {} },
+    };
+
+    expect(result.current.data).toEqual(expected);
     expect(getSpy).toHaveBeenCalledWith("/compare/versions", {
       params: {
         version_a: "v1.0",
@@ -60,18 +72,20 @@ describe("compare query hooks", () => {
   });
 
   it("useVersionDiff fetches diff data without benchmark when filter is absent", async () => {
-    const mockData: VersionDiff = {
+    const backendPayload = {
+      version_a: "v1.0",
+      version_b: "v2.0",
       regressed: [
-        { question_id: "q1", benchmark: "mmlu", task_category: "math", question: "2+2?" },
+        { question_id: "q1", benchmark: "mmlu", category: "math" },
       ],
       improved: [],
-      new_errors: ["格式与规范错误"],
-      resolved_errors: [],
+      new_errors: [{ question_id: "q2", benchmark: "mmlu", new_tag: "格式与规范错误" }],
+      fixed_errors: [{ question_id: "q3", benchmark: "mmlu", old_tag: "推理错误" }],
     };
 
     const getSpy = jest
       .spyOn(apiClient, "get")
-      .mockResolvedValueOnce({ data: mockData } as Awaited<ReturnType<typeof apiClient.get>>);
+      .mockResolvedValueOnce({ data: backendPayload } as Awaited<ReturnType<typeof apiClient.get>>);
 
     const { result } = renderHook(() => useVersionDiff("v1.0", "v2.0"), {
       wrapper: createWrapper(),
@@ -79,7 +93,14 @@ describe("compare query hooks", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    expect(result.current.data).toEqual(mockData);
+    const expected: VersionDiff = {
+      regressed: [{ question_id: "q1", benchmark: "mmlu", task_category: "math", question: "" }],
+      improved: [],
+      new_errors: ["格式与规范错误"],
+      resolved_errors: ["推理错误"],
+    };
+
+    expect(result.current.data).toEqual(expected);
     expect(getSpy).toHaveBeenCalledWith("/compare/diff", {
       params: {
         version_a: "v1.0",

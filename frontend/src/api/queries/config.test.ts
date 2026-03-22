@@ -67,7 +67,7 @@ describe("config query hooks", () => {
 
   it("creates, updates, and deletes rules", async () => {
     apiClientMock.post.mockImplementationOnce(async () => ({ data: { id: "r1" } }));
-    apiClientMock.put.mockImplementationOnce(async () => ({ data: { id: "r1", is_active: false } }));
+    apiClientMock.patch.mockImplementationOnce(async () => ({ data: { id: "r1", is_active: false } }));
     apiClientMock.delete.mockImplementation(async () => ({ data: null }));
 
     const createHook = renderHook(() => useCreateRule(), { wrapper: createWrapper() });
@@ -93,14 +93,14 @@ describe("config query hooks", () => {
     });
 
     expect(apiClientMock.post).toHaveBeenCalledWith("/rules", expect.objectContaining({ name: "Rule One" }));
-    expect(apiClientMock.put).toHaveBeenCalledWith("/rules/r1", { is_active: false });
+    expect(apiClientMock.patch).toHaveBeenCalledWith("/rules/r1", { is_active: false });
     expect(apiClientMock.delete).toHaveBeenCalledWith("/rules/r1");
   });
 
   it("fetches and mutates strategies", async () => {
     apiClientMock.get.mockImplementationOnce(async () => ({ data: [{ id: "s1", name: "Fallback" }] }));
     apiClientMock.post.mockImplementationOnce(async () => ({ data: { id: "s1" } }));
-    apiClientMock.put.mockImplementationOnce(async () => ({ data: { id: "s1", is_active: false } }));
+    apiClientMock.patch.mockImplementationOnce(async () => ({ data: { id: "s1", is_active: false } }));
     apiClientMock.delete.mockImplementationOnce(async () => ({ data: null }));
 
     const strategiesHook = renderHook(() => useStrategies(), { wrapper: createWrapper() });
@@ -134,14 +134,14 @@ describe("config query hooks", () => {
       "/llm/strategies",
       expect.objectContaining({ name: "Fallback" }),
     );
-    expect(apiClientMock.put).toHaveBeenCalledWith("/llm/strategies/s1", { is_active: false });
+    expect(apiClientMock.patch).toHaveBeenCalledWith("/llm/strategies/s1", { is_active: false });
     expect(apiClientMock.delete).toHaveBeenCalledWith("/llm/strategies/s1");
   });
 
   it("fetches and mutates templates", async () => {
     apiClientMock.get.mockImplementationOnce(async () => ({ data: [{ id: "t1", name: "Generic Template" }] }));
     apiClientMock.post.mockImplementationOnce(async () => ({ data: { id: "t1" } }));
-    apiClientMock.put.mockImplementationOnce(async () => ({ data: { id: "t1", is_active: false } }));
+    apiClientMock.patch.mockImplementationOnce(async () => ({ data: { id: "t1", is_active: false } }));
     apiClientMock.delete.mockImplementationOnce(async () => ({ data: null }));
 
     const templatesHook = renderHook(() => useTemplates(), { wrapper: createWrapper() });
@@ -170,7 +170,7 @@ describe("config query hooks", () => {
       "/llm/prompt-templates",
       expect.objectContaining({ name: "Generic Template" }),
     );
-    expect(apiClientMock.put).toHaveBeenCalledWith("/llm/prompt-templates/t1", { is_active: false });
+    expect(apiClientMock.patch).toHaveBeenCalledWith("/llm/prompt-templates/t1", { is_active: false });
     expect(apiClientMock.delete).toHaveBeenCalledWith("/llm/prompt-templates/t1");
   });
 

@@ -40,11 +40,22 @@ export default function TemplateFormModal({
     form.setFieldsValue({ benchmark: null, is_active: true });
   }, [form, open, template]);
 
+  const handleSubmit = async () => {
+    const values = await form.validateFields();
+    await onSubmit({
+      ...values,
+      benchmark:
+        typeof values.benchmark === "string" && values.benchmark.trim().length === 0
+          ? null
+          : values.benchmark ?? null,
+    });
+  };
+
   return (
     <Modal
       open={open}
       title={template ? t("config.templates.edit") : t("config.templates.create")}
-      onOk={() => void form.validateFields().then(onSubmit)}
+      onOk={() => void handleSubmit()}
       onCancel={onCancel}
       confirmLoading={loading}
       okText={t("common.save")}

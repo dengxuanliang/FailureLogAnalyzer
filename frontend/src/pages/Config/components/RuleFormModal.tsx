@@ -14,7 +14,6 @@ const CONDITION_TYPES: RuleConditionType[] = [
   "length_lt",
   "field_equals",
   "field_missing",
-  "python_expr",
 ];
 
 interface RuleFormModalProps {

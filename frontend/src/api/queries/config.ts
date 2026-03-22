@@ -135,7 +135,7 @@ export function useUpdateRule() {
   const queryClient = useQueryClient();
   return useMutation<AnalysisRule, Error, { id: string; data: AnalysisRuleUpdate }>({
     mutationFn: ({ id, data }) =>
-      apiClient.put<AnalysisRule>(`/rules/${id}`, data).then((response) => response.data),
+      apiClient.patch<AnalysisRule>(`/rules/${id}`, data).then((response) => response.data),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: RULES_KEY }),
   });
 }
@@ -171,7 +171,7 @@ export function useUpdateStrategy() {
   const queryClient = useQueryClient();
   return useMutation<AnalysisStrategy, Error, { id: string; data: AnalysisStrategyUpdate }>({
     mutationFn: ({ id, data }) =>
-      apiClient.put<AnalysisStrategy>(`/llm/strategies/${id}`, data).then((response) => response.data),
+      apiClient.patch<AnalysisStrategy>(`/llm/strategies/${id}`, data).then((response) => response.data),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: STRATEGIES_KEY }),
   });
 }
@@ -212,7 +212,7 @@ export function useUpdateTemplate() {
   return useMutation<PromptTemplate, Error, { id: string; data: PromptTemplateUpdate }>({
     mutationFn: ({ id, data }) =>
       apiClient
-        .put<PromptTemplate>(`/llm/prompt-templates/${id}`, data)
+        .patch<PromptTemplate>(`/llm/prompt-templates/${id}`, data)
         .then((response) => response.data),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: TEMPLATES_KEY }),
   });
