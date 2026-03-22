@@ -38,6 +38,7 @@ router = APIRouter(prefix="/llm", tags=["llm"])
 
 
 @router.get("/templates", response_model=list[TemplateResponse])
+@router.get("/prompt-templates", response_model=list[TemplateResponse])
 async def list_templates(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
@@ -47,6 +48,7 @@ async def list_templates(
 
 
 @router.get("/templates/{template_id}", response_model=TemplateResponse)
+@router.get("/prompt-templates/{template_id}", response_model=TemplateResponse)
 async def get_template(
     template_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -59,6 +61,7 @@ async def get_template(
 
 
 @router.post("/templates", response_model=TemplateResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/prompt-templates", response_model=TemplateResponse, status_code=status.HTTP_201_CREATED)
 async def create_template(
     payload: TemplateCreate,
     db: AsyncSession = Depends(get_db),
@@ -76,6 +79,9 @@ async def create_template(
 
 
 @router.patch("/templates/{template_id}", response_model=TemplateResponse)
+@router.patch("/prompt-templates/{template_id}", response_model=TemplateResponse)
+@router.put("/templates/{template_id}", response_model=TemplateResponse)
+@router.put("/prompt-templates/{template_id}", response_model=TemplateResponse)
 async def patch_template(
     template_id: uuid.UUID,
     payload: TemplatePatch,
@@ -95,6 +101,7 @@ async def patch_template(
 
 
 @router.delete("/templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/prompt-templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_template(
     template_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
@@ -147,6 +154,7 @@ async def create_strategy(
 
 
 @router.patch("/strategies/{strategy_id}", response_model=StrategyResponse)
+@router.put("/strategies/{strategy_id}", response_model=StrategyResponse)
 async def patch_strategy(
     strategy_id: uuid.UUID,
     payload: StrategyPatch,

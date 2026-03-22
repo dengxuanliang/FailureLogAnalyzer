@@ -12,6 +12,7 @@ from app.api.v1.routers.compare import router as compare_router
 from app.api.v1.routers.cross_benchmark import router as cross_benchmark_router
 from app.api.v1.routers.llm import router as llm_router
 from app.api.v1.routers.reports import router as reports_router
+from app.api.v1.routers.sessions import router as sessions_router
 from app.api.v1.routers.trends import router as trends_router
 from app.core.config import settings
 from app.core.logging import configure_logging
@@ -44,6 +45,7 @@ app.include_router(rules_router, prefix="/api/v1")
 app.include_router(agent_router, prefix="/api/v1")
 app.include_router(llm_router, prefix="/api/v1")
 app.include_router(analysis_router, prefix="/api/v1")
+app.include_router(sessions_router, prefix="/api/v1")
 app.include_router(compare_router, prefix="/api/v1")
 app.include_router(cross_benchmark_router, prefix="/api/v1")
 app.include_router(trends_router, prefix="/api/v1")

@@ -230,3 +230,56 @@ async def test_get_llm_job_status_not_found(async_client: AsyncClient):
             app.dependency_overrides.pop(get_db, None)
 
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_prompt_templates_alias_endpoints(async_client: AsyncClient):
+    from app.main import app
+
+    template = _make_template()
+    db = _make_db(templates=[template])
+
+    async def _get_test_db():
+        yield db
+
+    app.dependency_overrides[get_current_user] = _analyst_override()
+    app.dependency_overrides[get_db] = _get_test_db
+    try:
+        list_resp = await async_client.get("/api/v1/llm/prompt-templates")
+        update_resp = await async_client.put(
+            f"/api/v1/llm/prompt-templates/{template.id}",
+            json={"is_active": False},
+        )
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(get_db, None)
+
+    assert list_resp.status_code == 200
+    assert len(list_resp.json()) == 1
+    assert update_resp.status_code == 200
+    assert update_resp.json()["id"] == str(template.id)
+
+
+@pytest.mark.asyncio
+async def test_put_strategy_alias_updates_strategy(async_client: AsyncClient):
+    from app.main import app
+
+    strategy = _make_strategy()
+    db = _make_db(strategies=[strategy])
+
+    async def _get_test_db():
+        yield db
+
+    app.dependency_overrides[get_current_user] = _analyst_override()
+    app.dependency_overrides[get_db] = _get_test_db
+    try:
+        resp = await async_client.put(
+            f"/api/v1/llm/strategies/{strategy.id}",
+            json={"is_active": False},
+        )
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 200
+    assert resp.json()["id"] == str(strategy.id)

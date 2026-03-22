@@ -204,3 +204,21 @@ async def test_watcher_status_reflects_running_watcher(async_client, tmp_path, _
 
     assert resp.status_code == 200
     assert resp.json() == {"running": True, "watch_dir": str(tmp_path)}
+
+
+@pytest.mark.asyncio
+async def test_list_ingest_adapters(async_client):
+    from app.main import app
+
+    app.dependency_overrides[get_current_user] = _override_auth()
+    try:
+        resp = await async_client.get("/api/v1/ingest/adapters")
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert isinstance(body, list)
+    assert len(body) >= 1
+    first = body[0]
+    assert set(first.keys()) == {"name", "description", "detected_fields", "is_builtin"}

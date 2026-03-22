@@ -14,6 +14,7 @@ from app.core.redis import get_redis
 from app.api.v1.deps import get_current_user
 from app.db.models.user import User
 from app.ingestion.directory_watcher import DirectoryWatcher
+from app.ingestion.adapters.registry import AdapterRegistry
 from app.ingestion.job_store import create_job, get_job_status
 from app.tasks.ingest import parse_file
 
@@ -66,6 +67,35 @@ class WatcherStartRequest(BaseModel):
 class WatcherStatusResponse(BaseModel):
     running: bool
     watch_dir: str | None = None
+
+
+class AdapterMetadata(BaseModel):
+    name: str
+    description: str
+    detected_fields: list[str]
+    is_builtin: bool
+
+
+@router.get("/adapters", response_model=list[AdapterMetadata])
+async def list_adapters(
+    _: User = Depends(get_current_user),
+) -> list[AdapterMetadata]:
+    items: list[AdapterMetadata] = []
+    for name, adapter in sorted(AdapterRegistry.items()):
+        cls = adapter.__class__
+        description = (cls.__doc__ or "").strip().splitlines()[0] if cls.__doc__ else name
+        detected_fields = getattr(cls, "DETECTED_FIELDS", None)
+        if not isinstance(detected_fields, (list, tuple, set)):
+            detected_fields = []
+        items.append(
+            AdapterMetadata(
+                name=name,
+                description=description or name,
+                detected_fields=[str(field) for field in detected_fields],
+                is_builtin=cls.__module__.startswith("app.ingestion.adapters"),
+            )
+        )
+    return items
 
 
 @router.post("/upload", response_model=UploadResponse, status_code=status.HTTP_202_ACCEPTED)
