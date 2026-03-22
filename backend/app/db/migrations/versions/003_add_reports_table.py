@@ -41,7 +41,7 @@ def upgrade():
         sa.Column("title", sa.String(length=500), nullable=False),
         sa.Column(
             "report_type",
-            sa.Enum("summary", "comparison", "cross_benchmark", "custom", name="report_type_enum"),
+            postgresql.ENUM("summary", "comparison", "cross_benchmark", "custom", name="report_type_enum", create_type=False),
             nullable=False,
             server_default="summary",
         ),
@@ -53,7 +53,7 @@ def upgrade():
         sa.Column("content", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default=sa.text("'{}'::jsonb")),
         sa.Column(
             "status",
-            sa.Enum("pending", "generating", "done", "failed", name="report_status_enum"),
+            postgresql.ENUM("pending", "generating", "done", "failed", name="report_status_enum", create_type=False),
             nullable=False,
             server_default="pending",
         ),
