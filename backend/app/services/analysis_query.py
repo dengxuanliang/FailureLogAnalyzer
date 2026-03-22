@@ -4,11 +4,11 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.analysis_result import AnalysisResult
-from app.db.models.enums import AnalysisType
+from app.db.models.enums import AnalysisType, TagSource
 from app.db.models.error_tag import ErrorTag
 from app.db.models.eval_record import EvalRecord
 from app.db.models.eval_session import EvalSession
@@ -269,4 +269,44 @@ async def get_record_detail(db: AsyncSession, record_id: uuid.UUID) -> dict[str,
             }
             for tag in tag_rows
         ],
+    }
+
+
+async def update_record_error_tags(
+    db: AsyncSession,
+    *,
+    record_id: uuid.UUID,
+    tags: list[str],
+) -> dict[str, Any] | None:
+    record = await db.get(EvalRecord, record_id)
+    if record is None:
+        return None
+
+    normalized_tags: list[str] = []
+    seen: set[str] = set()
+    for raw_tag in tags:
+        tag = raw_tag.strip()
+        if not tag or tag in seen:
+            continue
+        seen.add(tag)
+        normalized_tags.append(tag)
+
+    await db.execute(delete(ErrorTag).where(ErrorTag.record_id == record_id))
+
+    for tag in normalized_tags:
+        db.add(
+            ErrorTag(
+                record_id=record_id,
+                analysis_result_id=None,
+                tag_path=tag,
+                tag_level=max(1, len(tag.split("."))),
+                source=TagSource.rule,
+                confidence=1.0,
+            )
+        )
+
+    await db.commit()
+    return {
+        "record_id": record_id,
+        "saved_tags": normalized_tags,
     }

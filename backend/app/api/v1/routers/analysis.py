@@ -9,12 +9,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.v1.deps import require_role
 from app.db.models.enums import UserRole
 from app.db.session import get_db
-from app.schemas.analysis_query import AnalysisSummary, DistributionItem, PaginatedRecords, RecordDetail
+from app.schemas.analysis_query import (
+    AnalysisSummary,
+    DistributionItem,
+    PaginatedRecords,
+    RecordDetail,
+    RecordTagsPatchRequest,
+    RecordTagsPatchResponse,
+)
 from app.services.analysis_query import (
     get_analysis_summary,
     get_error_distribution,
     get_error_records_page,
     get_record_detail,
+    update_record_error_tags,
 )
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
@@ -84,3 +92,16 @@ async def record_detail(
     if detail is None:
         raise HTTPException(status_code=404, detail="Record not found")
     return detail
+
+
+@router.patch("/records/{record_id}/tags", response_model=RecordTagsPatchResponse)
+async def patch_record_tags(
+    record_id: uuid.UUID,
+    payload: RecordTagsPatchRequest,
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(UserRole.analyst)),
+):
+    result = await update_record_error_tags(db=db, record_id=record_id, tags=payload.tags)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Record not found")
+    return result

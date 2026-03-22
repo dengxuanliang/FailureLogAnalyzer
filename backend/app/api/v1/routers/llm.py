@@ -4,6 +4,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field
 from sqlalchemy import select, func as sqlfunc
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,7 +13,7 @@ from app.api.v1.deps import get_current_user, require_role
 from app.core.redis import get_redis
 from app.db.models.analysis_result import AnalysisResult
 from app.db.models.analysis_strategy import AnalysisStrategy
-from app.db.models.enums import AnalysisType, UserRole
+from app.db.models.enums import AnalysisType, UserRole, StrategyType
 from app.db.models.eval_record import EvalRecord
 from app.db.models.eval_session import EvalSession
 from app.db.models.prompt_template import PromptTemplate
@@ -35,6 +36,74 @@ from app.schemas.llm import (
 from app.tasks.analysis import run_llm_judge
 
 router = APIRouter(prefix="/llm", tags=["llm"])
+
+
+class LlmTriggerCompatRequest(BaseModel):
+    record_ids: list[uuid.UUID] = Field(min_length=1)
+    strategy: str | None = None
+
+
+async def _enqueue_llm_job(
+    *,
+    session_id: uuid.UUID,
+    strategy_id: uuid.UUID,
+    manual_record_ids: list[uuid.UUID],
+) -> LlmJobTriggerResponse:
+    job_id = str(uuid.uuid4())
+    redis = await get_redis()
+    manual_ids = [str(item) for item in manual_record_ids]
+    await create_job(
+        redis,
+        job_id=job_id,
+        session_id=str(session_id),
+        strategy_id=str(strategy_id),
+        manual_record_ids=manual_ids,
+    )
+
+    task = run_llm_judge.delay(
+        session_id=str(session_id),
+        strategy_id=str(strategy_id),
+        job_id=job_id,
+        manual_record_ids=manual_ids,
+    )
+    await update_job(redis, job_id, celery_task_id=task.id, status="queued")
+    return LlmJobTriggerResponse(job_id=job_id, celery_task_id=task.id, status="queued")
+
+
+async def trigger_llm_job_compat_by_record_ids(
+    *,
+    payload: LlmTriggerCompatRequest,
+    db: AsyncSession,
+) -> LlmJobTriggerResponse:
+    records = (
+        await db.execute(select(EvalRecord).where(EvalRecord.id.in_(payload.record_ids)))
+    ).scalars().all()
+    if len(records) != len(payload.record_ids):
+        raise HTTPException(status_code=404, detail="Record not found")
+
+    session_ids = {record.session_id for record in records}
+    if len(session_ids) != 1:
+        raise HTTPException(status_code=409, detail="Records must belong to the same session")
+    session_id = next(iter(session_ids))
+
+    strategy_stmt = (
+        select(AnalysisStrategy)
+        .where(
+            AnalysisStrategy.strategy_type == StrategyType.manual,
+            AnalysisStrategy.is_active.is_(True),
+        )
+        .order_by(AnalysisStrategy.created_at.desc())
+        .limit(1)
+    )
+    strategy = (await db.execute(strategy_stmt)).scalars().first()
+    if strategy is None:
+        raise HTTPException(status_code=409, detail="No active manual strategy found")
+
+    return await _enqueue_llm_job(
+        session_id=session_id,
+        strategy_id=strategy.id,
+        manual_record_ids=list(payload.record_ids),
+    )
 
 
 @router.get("/templates", response_model=list[TemplateResponse])
@@ -193,6 +262,15 @@ async def delete_strategy(
     await db.commit()
 
 
+@router.post("/trigger", response_model=LlmJobTriggerResponse, status_code=status.HTTP_202_ACCEPTED)
+async def trigger_llm_job_compat(
+    payload: LlmTriggerCompatRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_role(UserRole.analyst)),
+):
+    return await trigger_llm_job_compat_by_record_ids(payload=payload, db=db)
+
+
 @router.post("/jobs/trigger", response_model=LlmJobTriggerResponse, status_code=status.HTTP_202_ACCEPTED)
 async def trigger_llm_job(
     payload: LlmJobTriggerRequest,
@@ -209,26 +287,11 @@ async def trigger_llm_job(
     if not strategy.is_active:
         raise HTTPException(status_code=409, detail="Strategy is inactive")
 
-    job_id = str(uuid.uuid4())
-    redis = await get_redis()
-    manual_ids = [str(item) for item in payload.manual_record_ids]
-    await create_job(
-        redis,
-        job_id=job_id,
-        session_id=str(payload.session_id),
-        strategy_id=str(payload.strategy_id),
-        manual_record_ids=manual_ids,
+    return await _enqueue_llm_job(
+        session_id=payload.session_id,
+        strategy_id=payload.strategy_id,
+        manual_record_ids=payload.manual_record_ids,
     )
-
-    task = run_llm_judge.delay(
-        session_id=str(payload.session_id),
-        strategy_id=str(payload.strategy_id),
-        job_id=job_id,
-        manual_record_ids=manual_ids,
-    )
-    await update_job(redis, job_id, celery_task_id=task.id, status="queued")
-
-    return LlmJobTriggerResponse(job_id=job_id, celery_task_id=task.id, status="queued")
 
 
 @router.get("/jobs/{job_id}/status", response_model=LlmJobStatusResponse)

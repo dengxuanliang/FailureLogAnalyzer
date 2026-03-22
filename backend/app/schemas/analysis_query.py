@@ -61,3 +61,13 @@ class RecordDetail(BaseModel):
     record: dict[str, Any]
     analysis_results: list[AnalysisResultDetail]
     error_tags: list[dict[str, Any]]
+
+
+class RecordTagsPatchRequest(BaseModel):
+    tags: list[str] = Field(default_factory=list)
+    note: str | None = None
+
+
+class RecordTagsPatchResponse(BaseModel):
+    record_id: uuid.UUID
+    saved_tags: list[str] = Field(default_factory=list)
