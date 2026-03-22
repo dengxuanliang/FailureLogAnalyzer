@@ -101,8 +101,8 @@ export default function AppLayout() {
               <Outlet />
             </Content>
           </Layout>
+          <AgentChatWindow />
         </FilterProvider>
-        <AgentChatWindow />
       </Layout>
     </App>
   );
