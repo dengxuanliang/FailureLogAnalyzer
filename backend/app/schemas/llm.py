@@ -35,7 +35,7 @@ class TemplateResponse(BaseModel):
     is_active: bool
     created_by: str | None
     created_at: datetime
-    updated_at: datetime
+    updated_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 

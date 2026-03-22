@@ -132,3 +132,55 @@ async def test_llm_trigger_alias_endpoint_exists(compat_client: AsyncClient, ana
     assert response.status_code == 202
     assert response.json() == expected
     compat_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_llm_trigger_alias_falls_back_to_any_active_strategy_when_manual_missing() -> None:
+    from app.api.v1.routers.llm import LlmTriggerCompatRequest, trigger_llm_job_compat_by_record_ids
+    from app.db.models.enums import StrategyType
+
+    record_id = uuid.uuid4()
+    session_id = uuid.uuid4()
+    fallback_strategy_id = uuid.uuid4()
+
+    record = MagicMock()
+    record.id = record_id
+    record.session_id = session_id
+
+    fallback_strategy = MagicMock()
+    fallback_strategy.id = fallback_strategy_id
+    fallback_strategy.strategy_type = StrategyType.fallback
+
+    record_result = MagicMock()
+    record_result.scalars.return_value.all.return_value = [record]
+
+    no_manual_strategy_result = MagicMock()
+    no_manual_strategy_result.scalars.return_value.first.return_value = None
+
+    fallback_strategy_result = MagicMock()
+    fallback_strategy_result.scalars.return_value.first.return_value = fallback_strategy
+
+    db = AsyncMock()
+    db.execute = AsyncMock(
+        side_effect=[
+            record_result,
+            no_manual_strategy_result,
+            fallback_strategy_result,
+        ]
+    )
+
+    with patch(
+        "app.api.v1.routers.llm._enqueue_llm_job",
+        new=AsyncMock(return_value={"job_id": "job-1", "celery_task_id": "celery-1", "status": "queued"}),
+    ) as enqueue_mock:
+        result = await trigger_llm_job_compat_by_record_ids(
+            payload=LlmTriggerCompatRequest(record_ids=[record_id], strategy="manual"),
+            db=db,
+        )
+
+    assert result["status"] == "queued"
+    enqueue_mock.assert_awaited_once_with(
+        session_id=session_id,
+        strategy_id=fallback_strategy_id,
+        manual_record_ids=[record_id],
+    )

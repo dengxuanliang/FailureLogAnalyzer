@@ -261,6 +261,37 @@ async def test_prompt_templates_alias_endpoints(async_client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_prompt_templates_alias_list_supports_real_prompt_template_model(async_client: AsyncClient):
+    from app.main import app
+
+    template = PromptTemplate(
+        id=uuid.uuid4(),
+        name="real-template",
+        benchmark="mmlu",
+        template="Q:{question}",
+        version=1,
+        is_active=True,
+        created_by="analyst_user",
+    )
+    template.created_at = datetime.now(timezone.utc)
+    db = _make_db(templates=[template])
+
+    async def _get_test_db():
+        yield db
+
+    app.dependency_overrides[get_current_user] = _analyst_override()
+    app.dependency_overrides[get_db] = _get_test_db
+    try:
+        resp = await async_client.get("/api/v1/llm/prompt-templates")
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 200
+    assert resp.json()[0]["id"] == str(template.id)
+
+
+@pytest.mark.asyncio
 async def test_put_strategy_alias_updates_strategy(async_client: AsyncClient):
     from app.main import app
 

@@ -86,7 +86,7 @@ async def trigger_llm_job_compat_by_record_ids(
         raise HTTPException(status_code=409, detail="Records must belong to the same session")
     session_id = next(iter(session_ids))
 
-    strategy_stmt = (
+    manual_strategy_stmt = (
         select(AnalysisStrategy)
         .where(
             AnalysisStrategy.strategy_type == StrategyType.manual,
@@ -95,9 +95,17 @@ async def trigger_llm_job_compat_by_record_ids(
         .order_by(AnalysisStrategy.created_at.desc())
         .limit(1)
     )
-    strategy = (await db.execute(strategy_stmt)).scalars().first()
+    strategy = (await db.execute(manual_strategy_stmt)).scalars().first()
     if strategy is None:
-        raise HTTPException(status_code=409, detail="No active manual strategy found")
+        fallback_strategy_stmt = (
+            select(AnalysisStrategy)
+            .where(AnalysisStrategy.is_active.is_(True))
+            .order_by(AnalysisStrategy.created_at.desc())
+            .limit(1)
+        )
+        strategy = (await db.execute(fallback_strategy_stmt)).scalars().first()
+    if strategy is None:
+        raise HTTPException(status_code=409, detail="No active strategy found")
 
     return await _enqueue_llm_job(
         session_id=session_id,
