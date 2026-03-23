@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Alert, Button, Descriptions, Drawer, Empty, Space, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useTranslation } from "react-i18next";
@@ -36,7 +36,7 @@ export default function Sessions() {
 
   const detailQuery = useSessionDetail(selectedSessionId);
 
-  const handleRerunRules = async (sessionId: string) => {
+  const handleRerunRules = useCallback(async (sessionId: string) => {
     setPendingActionSessionId(sessionId);
     setPendingActionType("rerun");
     try {
@@ -46,9 +46,9 @@ export default function Sessions() {
       setPendingActionSessionId(null);
       setPendingActionType(null);
     }
-  };
+  }, [rerunMutation]);
 
-  const handleDeleteSession = async (sessionId: string) => {
+  const handleDeleteSession = useCallback(async (sessionId: string) => {
     setPendingActionSessionId(sessionId);
     setPendingActionType("delete");
     try {
@@ -61,7 +61,7 @@ export default function Sessions() {
       setPendingActionSessionId(null);
       setPendingActionType(null);
     }
-  };
+  }, [deleteMutation, selectedSessionId, t]);
 
   const columns: ColumnsType<EvalSession> = useMemo(
     () => [
@@ -153,6 +153,8 @@ export default function Sessions() {
       pendingActionType,
       rerunMutation.isPending,
       deleteMutation.isPending,
+      handleDeleteSession,
+      handleRerunRules,
     ],
   );
 

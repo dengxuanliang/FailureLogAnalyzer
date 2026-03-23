@@ -25,6 +25,7 @@
 
 - Kubernetes 集群
 - `kubectl`
+- `ruby`（当前 `scripts/k8s-apply.sh` 用它来重写 overlay 中的镜像定义）
 - 可访问的镜像仓库
 - CloudNativePG（`postgresql.cnpg.io` CRD）
 

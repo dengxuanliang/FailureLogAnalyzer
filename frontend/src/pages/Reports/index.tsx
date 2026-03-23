@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Alert, Button, Card, Descriptions, Drawer, Empty, Form, Input, Space, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useTranslation } from "react-i18next";
@@ -68,11 +68,11 @@ export default function Reports() {
 
   const detailQuery = useReportDetail(selectedReportId);
 
-  const handleExport = async (reportId: string, format: "json" | "markdown") => {
+  const handleExport = useCallback(async (reportId: string, format: "json" | "markdown") => {
     const payload = await detailReportExport.mutateAsync({ reportId, format });
     triggerDownload(payload);
     setActionMessage(t("reports.exportSuccess"));
-  };
+  }, [detailReportExport, t]);
 
   const handleGenerate = async (values: ReportGeneratePayload) => {
     const payload: ReportGeneratePayload = {
@@ -141,7 +141,7 @@ export default function Reports() {
         ),
       },
     ],
-    [t],
+    [handleExport, t],
   );
 
   if (reportsQuery.isError) {

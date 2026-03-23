@@ -58,6 +58,11 @@ module.exports = [
         it: "readonly",
         jest: "readonly",
         localStorage: "readonly",
+        CloseEvent: "readonly",
+        HTMLAnchorElement: "readonly",
+        Blob: "readonly",
+        navigator: "readonly",
+        URL: "readonly",
       },
     },
     rules: {

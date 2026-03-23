@@ -24,6 +24,7 @@ export interface AgentChatContextValue {
   replaceLastAssistantMessage: (message: ChatMessage) => void;
   setConversationId: (id: string | null) => void;
   clearMessages: () => void;
+  setMessages: (messages: ChatMessage[]) => void;
   setPendingAction: (action: ActionPayload | null) => void;
 }
 
@@ -96,6 +97,10 @@ export function AgentChatProvider({ children }: PropsWithChildren) {
     setMessages([]);
   }, []);
 
+  const replaceMessages = useCallback((nextMessages: ChatMessage[]) => {
+    setMessages(nextMessages);
+  }, []);
+
   const setIsConnected = useCallback((connected: boolean) => {
     setConnectionStatus(connected ? "connected" : "disconnected");
   }, []);
@@ -117,6 +122,7 @@ export function AgentChatProvider({ children }: PropsWithChildren) {
       replaceLastAssistantMessage,
       setConversationId,
       clearMessages,
+      setMessages: replaceMessages,
       setPendingAction,
     }),
     [
@@ -131,6 +137,7 @@ export function AgentChatProvider({ children }: PropsWithChildren) {
       finalizeStreaming,
       replaceLastAssistantMessage,
       clearMessages,
+      replaceMessages,
     ],
   );
 

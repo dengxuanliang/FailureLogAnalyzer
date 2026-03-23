@@ -18,9 +18,12 @@ from app.db.models.prompt_template import PromptTemplate
 from app.db.models.analysis_strategy import AnalysisStrategy
 from app.db.models.provider_secret import ProviderSecret
 from app.db.models.report import Report
+from app.db.models.agent_conversation import AgentConversation
+from app.db.models.agent_conversation_message import AgentConversationMessage
 
 __all__ = [
     "Base", "UserRole", "AnalysisType", "SeverityLevel", "TagSource", "StrategyType", "ReportType", "ReportStatus",
     "User", "EvalSession", "EvalRecord", "AnalysisResult",
     "ErrorTag", "AnalysisRule", "PromptTemplate", "AnalysisStrategy", "ProviderSecret", "Report",
+    "AgentConversation", "AgentConversationMessage",
 ]

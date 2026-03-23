@@ -18,6 +18,7 @@ const config: Config = {
     "\\.(css|less)$": "identity-obj-proxy",
   },
   setupFilesAfterEnv: ["<rootDir>/setupTests.ts"],
+  testPathIgnorePatterns: ["<rootDir>/e2e/"],
 };
 
 export default config;

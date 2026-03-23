@@ -14,6 +14,7 @@ function TestConsumer() {
     appendToken,
     finalizeStreaming,
     setConversationId,
+    setMessages,
     setPendingAction,
   } = useAgentChatContext();
 
@@ -44,6 +45,21 @@ function TestConsumer() {
       <button type="button" onClick={() => appendToken("hello")}>append token</button>
       <button type="button" onClick={() => finalizeStreaming()}>finalize</button>
       <button type="button" onClick={() => setConversationId("conv-1")}>set conversation</button>
+      <button
+        type="button"
+        onClick={() =>
+          setMessages([
+            {
+              id: "history-1",
+              role: "assistant",
+              content: "history",
+              timestamp: "2026-03-21T00:00:02Z",
+            },
+          ])
+        }
+      >
+        load history
+      </button>
       <button
         type="button"
         onClick={() => setPendingAction({ type: "navigate", page: "compare" })}
@@ -83,11 +99,12 @@ describe("AgentChatProvider", () => {
       screen.getByRole("button", { name: "append token" }).click();
       screen.getByRole("button", { name: "finalize" }).click();
       screen.getByRole("button", { name: "set conversation" }).click();
+      screen.getByRole("button", { name: "load history" }).click();
       screen.getByRole("button", { name: "set action" }).click();
     });
 
     expect(screen.getByTestId("msg-count")).toHaveTextContent("1");
-    expect(screen.getByTestId("last-content")).toHaveTextContent("hello");
+    expect(screen.getByTestId("last-content")).toHaveTextContent("history");
     expect(screen.getByTestId("conv-id")).toHaveTextContent("conv-1");
     expect(screen.getByTestId("is-open")).toHaveTextContent("true");
     expect(screen.getByTestId("is-connected")).toHaveTextContent("true");

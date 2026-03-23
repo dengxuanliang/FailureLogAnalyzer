@@ -1,10 +1,12 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
 import { jest } from "@jest/globals";
-import type { ActionPayload, ChatMessage } from "../types/agent";
+import type { ActionPayload, AgentConversationDetail, ChatMessage } from "../types/agent";
 
 const mockSocketSend = jest.fn<(_payload: unknown) => boolean>();
 const mockDisconnect = jest.fn();
 const mockMutate: any = jest.fn();
+const mockFetchAgentConversation = jest.fn<(conversationId: string) => Promise<AgentConversationDetail>>();
 let websocketUrl = "";
 let socketHandlers: {
   onToken: (token: string) => void;
@@ -38,9 +40,15 @@ jest.unstable_mockModule("./useGlobalFilters", () => ({
 }));
 
 jest.unstable_mockModule("../api/queries/agent", () => ({
+  agentConversationKeys: {
+    all: ["agentConversations"],
+    lists: () => ["agentConversations", "list"],
+    detail: (conversationId: string | null) => ["agentConversations", conversationId],
+  },
   useAgentChatMutation: () => ({
     mutate: mockMutate,
   }),
+  fetchAgentConversation: mockFetchAgentConversation,
 }));
 
 jest.unstable_mockModule("../contexts/AuthContext", () => ({
@@ -52,14 +60,46 @@ jest.unstable_mockModule("../contexts/AuthContext", () => ({
 const { AgentChatProvider } = await import("../contexts/AgentChatContext");
 const { useAgentChat } = await import("./useAgentChat");
 
-const wrapper = ({ children }: { children: React.ReactNode }) => (
-  <AgentChatProvider>{children}</AgentChatProvider>
-);
+const wrapper = ({ children }: { children: React.ReactNode }) => {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AgentChatProvider>{children}</AgentChatProvider>
+    </QueryClientProvider>
+  );
+};
 
 describe("useAgentChat", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockSocketSend.mockReturnValue(true);
+    mockFetchAgentConversation.mockResolvedValue({
+      conversation_id: "conv-history",
+      messages: [
+        {
+          id: "history-user-1",
+          role: "user",
+          content: "history question",
+          timestamp: "2026-03-21T00:00:00Z",
+        },
+        {
+          id: "history-assistant-1",
+          role: "assistant",
+          content: "history answer",
+          timestamp: "2026-03-21T00:00:01Z",
+        },
+      ],
+      reply: "history answer",
+      current_step: "query_done",
+      intent: "query",
+      needs_human_input: false,
+    });
   });
 
   it("send() appends a user message and a streaming placeholder, then sends websocket payload with filters", () => {
@@ -165,5 +205,41 @@ describe("useAgentChat", () => {
       isStreaming: false,
     });
     expect(result.current.pendingAction).toEqual({ type: "navigate", page: "analysis" });
+  });
+
+  it("resumes a conversation by replacing local messages", async () => {
+    const { result } = renderHook(() => useAgentChat(), { wrapper });
+
+    act(() => {
+      result.current.send("temporary");
+    });
+    expect(result.current.messages).toHaveLength(2);
+
+    await act(async () => {
+      await result.current.resumeConversation("conv-history");
+    });
+
+    expect(mockFetchAgentConversation).toHaveBeenCalledWith("conv-history");
+    expect(result.current.conversationId).toBe("conv-history");
+    expect(result.current.messages).toHaveLength(2);
+    expect(result.current.messages[0]).toMatchObject({ content: "history question" });
+    expect(result.current.messages[1]).toMatchObject({ content: "history answer" });
+  });
+
+  it("starts a new conversation by clearing local state", async () => {
+    const { result } = renderHook(() => useAgentChat(), { wrapper });
+
+    await act(async () => {
+      await result.current.resumeConversation("conv-history");
+    });
+    expect(result.current.messages).toHaveLength(2);
+
+    act(() => {
+      result.current.startNewConversation();
+    });
+
+    expect(result.current.conversationId).toBeNull();
+    expect(result.current.messages).toHaveLength(0);
+    expect(result.current.pendingAction).toBeNull();
   });
 });

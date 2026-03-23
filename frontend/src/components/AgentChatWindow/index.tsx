@@ -1,8 +1,10 @@
 import { MessageOutlined } from "@ant-design/icons";
 import { Badge, Drawer, FloatButton } from "antd";
 import { useTranslation } from "react-i18next";
+import { useAgentConversations } from "../../api/queries/agent";
 import { useAgentChat } from "../../hooks/useAgentChat";
 import { ChatActionRouter } from "./ChatActionRouter";
+import { ConversationList } from "./ConversationList";
 import { MessageInput } from "./MessageInput";
 import { MessageList } from "./MessageList";
 
@@ -10,13 +12,18 @@ export function AgentChatWindow() {
   const { t } = useTranslation();
   const {
     messages,
+    conversationId,
     isOpen,
     setIsOpen,
     isConnected,
     send,
+    startNewConversation,
+    resumeConversation,
+    isResumingConversation,
     pendingAction,
     clearPendingAction,
   } = useAgentChat();
+  const { data: conversations = [], isLoading: isLoadingConversations } = useAgentConversations();
 
   const unreadCount = !isOpen ? messages.filter((message) => message.role === "assistant").length : 0;
 
@@ -43,8 +50,22 @@ export function AgentChatWindow() {
         mask={false}
         styles={{ body: { display: "flex", flexDirection: "column", height: "100%", padding: 0 } }}
       >
+        <ConversationList
+          conversations={conversations}
+          activeConversationId={conversationId}
+          isLoading={isLoadingConversations}
+          isResumingConversation={isResumingConversation}
+          onSelectConversation={(nextConversationId) => void resumeConversation(nextConversationId)}
+          onStartNewConversation={startNewConversation}
+          labels={{
+            recentConversations: t("chat.recentConversations"),
+            newConversation: t("chat.newConversation"),
+            noConversations: t("chat.noConversations"),
+            loadingConversations: t("chat.loadingConversations"),
+          }}
+        />
         <MessageList messages={messages} />
-        <MessageInput onSend={send} disabled={false} />
+        <MessageInput onSend={send} disabled={isResumingConversation} />
       </Drawer>
     </>
   );

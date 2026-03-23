@@ -54,4 +54,17 @@ export interface AgentChatResponse {
   reply: string;
   messages: ChatMessage[];
   action?: ActionPayload;
+  current_step?: string;
+  intent?: string;
+  needs_human_input?: boolean;
 }
+
+export interface AgentConversationListItem {
+  conversation_id: string;
+  last_message: string | null;
+  intent?: string;
+  current_step?: string;
+  updated_at: string;
+}
+
+export interface AgentConversationDetail extends AgentChatResponse {}

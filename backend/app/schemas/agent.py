@@ -38,3 +38,14 @@ class ConversationListItem(BaseModel):
     intent: str
     current_step: str
     updated_at: datetime
+
+
+class ConversationDetailResponse(BaseModel):
+    conversation_id: str
+    messages: list[AgentMessage]
+    reply: str = ""
+    intent: str
+    current_step: str
+    needs_human_input: bool = False
+    created_at: datetime
+    updated_at: datetime

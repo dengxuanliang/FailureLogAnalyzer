@@ -1,5 +1,6 @@
-import { useCallback, useMemo } from "react";
-import { useAgentChatMutation } from "../api/queries/agent";
+import { useQueryClient } from "@tanstack/react-query";
+import { useCallback, useMemo, useState } from "react";
+import { agentConversationKeys, fetchAgentConversation, useAgentChatMutation } from "../api/queries/agent";
 import { useAuth } from "../contexts/AuthContext";
 import { useAgentChatContext } from "../contexts/AgentChatContext";
 import { useGlobalFilters } from "./useGlobalFilters";
@@ -45,8 +46,11 @@ export interface UseAgentChatReturn {
   conversationId: string | null;
   isConnected: boolean;
   isOpen: boolean;
+  isResumingConversation: boolean;
   setIsOpen: (open: boolean) => void;
   send: (text: string) => void;
+  startNewConversation: () => void;
+  resumeConversation: (conversationId: string) => Promise<void>;
   pendingAction: ActionPayload | null;
   clearPendingAction: () => void;
 }
@@ -64,9 +68,13 @@ export function useAgentChat(): UseAgentChatReturn {
     finalizeStreaming,
     replaceLastAssistantMessage,
     setConversationId,
+    setMessages,
+    clearMessages,
     pendingAction,
     setPendingAction,
   } = useAgentChatContext();
+  const [isResumingConversation, setIsResumingConversation] = useState(false);
+  const queryClient = useQueryClient();
   const { token } = useAuth();
   const { benchmark, model_version, time_range_start, time_range_end } = useGlobalFilters();
   const agentChatMutation = useAgentChatMutation();
@@ -99,6 +107,34 @@ export function useAgentChat(): UseAgentChatReturn {
   const clearPendingAction = useCallback(() => {
     setPendingAction(null);
   }, [setPendingAction]);
+
+  const startNewConversation = useCallback(() => {
+    setConversationId(null);
+    clearMessages();
+    setPendingAction(null);
+  }, [clearMessages, setConversationId, setPendingAction]);
+
+  const resumeConversation = useCallback(
+    async (nextConversationId: string) => {
+      if (!nextConversationId) {
+        return;
+      }
+
+      setIsResumingConversation(true);
+      try {
+        const conversation = await fetchAgentConversation(nextConversationId);
+        setConversationId(conversation.conversation_id);
+        setMessages(conversation.messages);
+        setPendingAction(null);
+        queryClient.setQueryData(agentConversationKeys.detail(nextConversationId), conversation);
+      } catch {
+        // Keep current local state when resuming fails.
+      } finally {
+        setIsResumingConversation(false);
+      }
+    },
+    [queryClient, setConversationId, setMessages, setPendingAction],
+  );
 
   const send = useCallback(
     (text: string) => {
@@ -148,6 +184,8 @@ export function useAgentChat(): UseAgentChatReturn {
           if (response.action) {
             setPendingAction(response.action);
           }
+          void queryClient.invalidateQueries({ queryKey: agentConversationKeys.lists() });
+          queryClient.setQueryData(agentConversationKeys.detail(response.conversation_id), response);
         },
         onError: () => {
           replaceLastAssistantMessage(createAssistantMessage("Unable to reach the agent right now."));
@@ -166,6 +204,7 @@ export function useAgentChat(): UseAgentChatReturn {
       setPendingAction,
       time_range_end,
       time_range_start,
+      queryClient,
     ],
   );
 
@@ -174,8 +213,11 @@ export function useAgentChat(): UseAgentChatReturn {
     conversationId,
     isConnected,
     isOpen,
+    isResumingConversation,
     setIsOpen,
     send,
+    startNewConversation,
+    resumeConversation,
     pendingAction,
     clearPendingAction,
   };
