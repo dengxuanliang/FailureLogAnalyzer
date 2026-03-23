@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import uuid
 
 import orjson
@@ -11,6 +10,7 @@ from app.db.models.enums import ReportStatus, ReportType
 from app.db.models.report import Report
 from app.db.session import get_async_session
 from app.services.report_builder import build_report
+from app.tasks.async_runner import run_async_in_worker
 
 _PROGRESS_CHANNEL_PREFIX = "report_progress"
 
@@ -57,6 +57,8 @@ async def _generate_report_async(report_id: str, report_type: str, config: dict)
 @shared_task(name="tasks.report.generate_report", bind=True, max_retries=3, default_retry_delay=10)
 def generate_report(self, report_id: str, report_type: str, config: dict) -> dict:
     try:
-        return asyncio.run(_generate_report_async(report_id=report_id, report_type=report_type, config=config))
+        return run_async_in_worker(
+            _generate_report_async(report_id=report_id, report_type=report_type, config=config)
+        )
     except Exception as exc:  # pragma: no cover - Celery retry wrapper
         raise self.retry(exc=exc)

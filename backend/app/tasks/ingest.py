@@ -1,5 +1,4 @@
 from __future__ import annotations
-import asyncio
 import logging
 import time
 from pathlib import Path
@@ -18,6 +17,7 @@ from app.core.metrics import (
     INGEST_FAILURES_TOTAL,
     INGEST_RECORDS_TOTAL,
 )
+from app.tasks.async_runner import run_async_in_worker
 
 logger = logging.getLogger(__name__)
 
@@ -164,15 +164,7 @@ def parse_file(
         model: Model identifier.
         model_version: Model version string.
     """
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            raise RuntimeError("closed")
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-    return loop.run_until_complete(
+    return run_async_in_worker(
         _run_parse(
             file_path=file_path,
             adapter_name=adapter_name,

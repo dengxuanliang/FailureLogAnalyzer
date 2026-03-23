@@ -218,6 +218,34 @@ docker compose logs -f worker-llm
 docker compose logs -f frontend
 ```
 
+## 轻量主流程 Smoke 验证
+
+提供脚本：`./scripts/smoke-main-flow.sh`，用于快速验证主链路：
+
+- bootstrap/login
+- 上传 demo JSONL 并等待 ingest 完成
+- session 可见性（列表 + 详情）
+- report 生成与可见性（详情 + 列表）
+
+运行：
+
+```bash
+./scripts/smoke-main-flow.sh
+```
+
+可选参数（环境变量）：
+
+- `API_BASE`（默认 `http://localhost:8000`）
+- `FRONTEND_BASE`（默认 `http://localhost:3000`）
+- `DEMO_USERNAME` / `DEMO_EMAIL` / `DEMO_PASSWORD`（默认 `admin/admin@example.com/admin123456`）
+- `SMOKE_POLL_INTERVAL_SECS`（默认 `2`）
+- `SMOKE_MAX_POLL_ATTEMPTS`（默认 `45`）
+- `SMOKE_INGEST_RETRIES`（默认 `2`，用于吸收本地 ingest 偶发失败）
+- `SMOKE_ALLOW_DEMO_FALLBACK`（默认 `1`；upload ingest 不可用时回退到 `dev-seed-demo` 路径）
+- `SMOKE_REQUIRE_REPORT_DONE`（默认 `0`；设为 `1` 时要求 report 最终状态为 `done`）
+
+> 若登录失败，先执行 `./scripts/dev-create-admin.sh` 再重试。
+
 停止服务：
 
 ```bash

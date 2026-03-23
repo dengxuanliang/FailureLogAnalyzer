@@ -73,7 +73,7 @@ def test_generate_report_task_apply_uses_async_runner():
         coro.close()
         return {"status": "done"}
 
-    with patch("app.tasks.report.asyncio.run", autospec=True) as mock_run:
+    with patch("app.tasks.report.run_async_in_worker", autospec=True) as mock_run:
         mock_run.side_effect = _fake_run
         result = generate_report.apply(kwargs={"report_id": str(uuid.uuid4()), "report_type": "summary", "config": {}})
 

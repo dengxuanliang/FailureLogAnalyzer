@@ -59,6 +59,28 @@ def test_parse_file_runs_synchronously(sample_jsonl):
         assert result.state in ("SUCCESS", "PENDING")
 
 
+def test_parse_file_task_uses_async_runner(sample_jsonl):
+    def _fake_run(coro):
+        coro.close()
+        return {"status": "done"}
+
+    with patch("app.tasks.ingest.run_async_in_worker", side_effect=_fake_run) as mock_runner:
+        result = parse_file.apply(
+            args=[sample_jsonl],
+            kwargs={
+                "adapter_name": "generic_jsonl",
+                "job_id": "test-job-2",
+                "session_id": "11111111-1111-1111-1111-111111111111",
+                "benchmark": "generic",
+                "model": "test-model",
+                "model_version": "v1",
+            }
+        )
+
+    assert result.state in ("SUCCESS", "PENDING")
+    assert mock_runner.call_count == 1
+
+
 @pytest.mark.asyncio
 async def test_run_parse_updates_ingest_metrics_for_write_skip_and_normalize_failure(tmp_path):
     input_file = tmp_path / "input.jsonl"

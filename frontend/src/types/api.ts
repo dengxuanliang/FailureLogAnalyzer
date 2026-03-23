@@ -77,6 +77,11 @@ export interface IngestJobStatus {
   created_at: number;
 }
 
+export interface IngestJobListResponse {
+  items: IngestJobStatus[];
+  total: number;
+}
+
 export interface LlmJobTriggerPayload {
   session_id: string;
   strategy_id: string;
@@ -363,6 +368,24 @@ export interface ReportDetail extends ReportListItem {
 export interface ReportExportPayload {
   blob: globalThis.Blob;
   filename: string;
+}
+
+export interface ReportGeneratePayload {
+  title: string;
+  report_type: ReportType;
+  benchmark?: string | null;
+  model_version?: string | null;
+  session_ids?: string[] | null;
+  time_range_start?: string | null;
+  time_range_end?: string | null;
+  version_a?: string | null;
+  version_b?: string | null;
+}
+
+export interface ReportGenerateResponse {
+  report_id: string;
+  status: ReportStatus;
+  message: string;
 }
 
 export type PromptTemplateCreate = Omit<

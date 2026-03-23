@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
-import { Alert, Button, Descriptions, Drawer, Empty, Space, Table, Tag, Typography } from "antd";
+import { Alert, Button, Card, Descriptions, Drawer, Empty, Form, Input, Space, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useTranslation } from "react-i18next";
-import { useReportDetail, useReportExport, useReports } from "@/api/queries/reports";
-import type { ReportDetail, ReportListItem } from "@/types/api";
+import { useGenerateReport, useReportDetail, useReportExport, useReports } from "@/api/queries/reports";
+import type { ReportDetail, ReportGeneratePayload, ReportListItem } from "@/types/api";
 
 const { Title, Text } = Typography;
 
@@ -58,8 +58,10 @@ const renderContentPreview = (detail: ReportDetail) => {
 
 export default function Reports() {
   const { t } = useTranslation();
+  const [form] = Form.useForm<ReportGeneratePayload>();
   const reportsQuery = useReports();
   const detailReportExport = useReportExport();
+  const generateReport = useGenerateReport();
 
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -70,6 +72,19 @@ export default function Reports() {
     const payload = await detailReportExport.mutateAsync({ reportId, format });
     triggerDownload(payload);
     setActionMessage(t("reports.exportSuccess"));
+  };
+
+  const handleGenerate = async (values: ReportGeneratePayload) => {
+    const payload: ReportGeneratePayload = {
+      title: values.title.trim(),
+      report_type: values.report_type ?? "summary",
+      benchmark: values.benchmark?.trim() || undefined,
+      model_version: values.model_version?.trim() || undefined,
+    };
+
+    const response = await generateReport.mutateAsync(payload);
+    setActionMessage(response.message);
+    form.resetFields(["title", "benchmark", "model_version"]);
   };
 
   const columns: ColumnsType<ReportListItem> = useMemo(
@@ -144,22 +159,48 @@ export default function Reports() {
     );
   }
 
-  if (!reportsQuery.isLoading && (!reportsQuery.data || reportsQuery.data.length === 0)) {
-    return <Empty description={t("reports.empty")} />;
-  }
-
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       <Title level={4}>{t("reports.title")}</Title>
       {actionMessage ? <Alert type="success" message={actionMessage} showIcon /> : null}
 
-      <Table
-        rowKey={(record) => record.id}
-        columns={columns}
-        dataSource={reportsQuery.data ?? []}
-        loading={reportsQuery.isLoading}
-        pagination={{ pageSize: 10 }}
-      />
+      <Card title={t("reports.form.heading")}>
+        <Form
+          form={form}
+          layout="vertical"
+          initialValues={{ report_type: "summary" }}
+          onFinish={(values) => void handleGenerate(values)}
+        >
+          <Form.Item
+            label={t("reports.form.title")}
+            name="title"
+            rules={[{ required: true, message: t("reports.form.titleRequired") }]}
+          >
+            <Input aria-label={t("reports.form.title")} />
+          </Form.Item>
+          <Form.Item label={t("reports.form.benchmark")} name="benchmark">
+            <Input aria-label={t("reports.form.benchmark")} />
+          </Form.Item>
+          <Form.Item label={t("reports.form.modelVersion")} name="model_version">
+            <Input aria-label={t("reports.form.modelVersion")} />
+          </Form.Item>
+          <Button type="primary" htmlType="submit" loading={generateReport.isPending}>
+            {t("reports.actions.generate")}
+          </Button>
+        </Form>
+      </Card>
+
+      {!reportsQuery.isLoading && (!reportsQuery.data || reportsQuery.data.length === 0) ? (
+        <Empty description={t("reports.empty")} />
+      ) : (
+        <Table
+          rowKey={(record) => record.id}
+          columns={columns}
+          dataSource={reportsQuery.data ?? []}
+          loading={reportsQuery.isLoading}
+          pagination={{ pageSize: 10 }}
+        />
+      )}
 
       <Drawer
         open={Boolean(selectedReportId)}

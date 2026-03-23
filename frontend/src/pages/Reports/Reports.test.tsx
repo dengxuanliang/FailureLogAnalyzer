@@ -4,6 +4,7 @@ import { jest } from "@jest/globals";
 
 const mockUseReportDetail: any = jest.fn();
 const mockExportMutate: any = jest.fn();
+const mockGenerateMutate: any = jest.fn();
 
 const originalMatchMedia = window.matchMedia;
 const originalGetComputedStyle = window.getComputedStyle;
@@ -57,7 +58,13 @@ jest.unstable_mockModule("react-i18next", () => ({
         "reports.actions.view": "View Report",
         "reports.actions.exportJson": "Export JSON",
         "reports.actions.exportMarkdown": "Export Markdown",
+        "reports.actions.generate": "Generate Report",
         "reports.exportSuccess": "Report export started",
+        "reports.form.heading": "Generate New Report",
+        "reports.form.title": "Report Title",
+        "reports.form.titleRequired": "Report title is required",
+        "reports.form.benchmark": "Benchmark Filter",
+        "reports.form.modelVersion": "Model Version Filter",
         "reports.detail.title": "Report Detail",
         "reports.detail.id": "Report ID",
         "reports.detail.titleLabel": "Title",
@@ -99,6 +106,10 @@ jest.unstable_mockModule("@/api/queries/reports", () => ({
     mutateAsync: mockExportMutate,
     isPending: false,
   }),
+  useGenerateReport: () => ({
+    mutateAsync: mockGenerateMutate,
+    isPending: false,
+  }),
 }));
 
 const { default: Reports } = await import("./index");
@@ -129,6 +140,7 @@ describe("Reports page", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockGenerateMutate.mockResolvedValue({ report_id: "rep-new", status: "pending", message: "queued" });
     mockUseReportDetail.mockReturnValue({
       data: {
         id: "rep-1",
@@ -152,6 +164,24 @@ describe("Reports page", () => {
     mockExportMutate.mockResolvedValue({
       blob: new globalThis.Blob(["{}"], { type: "application/json" }),
       filename: "report-rep-1.json",
+    });
+  });
+
+  it("generates a new report from the report center form", async () => {
+    render(<Reports />);
+
+    await userEvent.type(screen.getByLabelText("Report Title"), "Nightly summary");
+    await userEvent.type(screen.getByLabelText("Benchmark Filter"), "mmlu");
+    await userEvent.type(screen.getByLabelText("Model Version Filter"), "v1");
+    await userEvent.click(screen.getByRole("button", { name: "Generate Report" }));
+
+    await waitFor(() => {
+      expect(mockGenerateMutate).toHaveBeenCalledWith({
+        title: "Nightly summary",
+        report_type: "summary",
+        benchmark: "mmlu",
+        model_version: "v1",
+      });
     });
   });
 

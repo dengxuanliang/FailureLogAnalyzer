@@ -61,13 +61,13 @@ def test_run_rules_logs_start_and_returns_summary():
         coro.close()
         return expected
 
-    with patch("app.tasks.analysis.asyncio.run", side_effect=_run_and_return) as mock_asyncio_run, \
+    with patch("app.tasks.analysis.run_async_in_worker", side_effect=_run_and_return) as mock_async_runner, \
          patch("app.tasks.analysis.logger") as mock_logger:
         result = analysis.run_rules.run(session_id="s1", rule_ids=["r1"])
 
     assert result == expected
     mock_logger.info.assert_any_call("run_rules task started", extra={"session_id": "s1", "rule_ids": ["r1"]})
-    assert mock_asyncio_run.call_count == 1
+    assert mock_async_runner.call_count == 1
 
 
 def test_run_rules_logs_exception_and_retries():
@@ -75,7 +75,7 @@ def test_run_rules_logs_exception_and_retries():
         coro.close()
         raise ValueError("boom")
 
-    with patch("app.tasks.analysis.asyncio.run", side_effect=_run_and_raise), \
+    with patch("app.tasks.analysis.run_async_in_worker", side_effect=_run_and_raise), \
          patch.object(analysis.run_rules, "retry", side_effect=RuntimeError("retry triggered")) as mock_retry, \
          patch("app.tasks.analysis.logger") as mock_logger:
         with pytest.raises(RuntimeError, match="retry triggered"):

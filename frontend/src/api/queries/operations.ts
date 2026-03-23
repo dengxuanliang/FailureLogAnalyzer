@@ -2,6 +2,7 @@ import { useMutation, useQueries, useQuery } from "@tanstack/react-query";
 import apiClient from "@/api/client";
 import type {
   AnalysisStrategy,
+  IngestJobListResponse,
   IngestJobStatus,
   IngestUploadPayload,
   IngestUploadResponse,
@@ -55,6 +56,17 @@ export function useIngestJobStatusQueries(jobIds: string[]) {
   });
 }
 
+export function useIngestJobs() {
+  return useQuery<IngestJobListResponse>({
+    queryKey: ["ingestJobs"],
+    queryFn: async () => {
+      const { data } = await apiClient.get<IngestJobListResponse>("/ingest/jobs");
+      return data;
+    },
+    refetchInterval: 5_000,
+  });
+}
+
 export function useLlmJobStatusQueries(jobIds: string[]) {
   return useQueries({
     queries: jobIds.map((jobId) => ({
@@ -66,6 +78,17 @@ export function useLlmJobStatusQueries(jobIds: string[]) {
       enabled: Boolean(jobId),
       refetchInterval: 3_000,
     })),
+  });
+}
+
+export function useLlmJobs() {
+  return useQuery<LlmJobStatus[]>({
+    queryKey: ["llmJobs"],
+    queryFn: async () => {
+      const { data } = await apiClient.get<LlmJobStatus[]>("/llm/jobs");
+      return data;
+    },
+    refetchInterval: 5_000,
   });
 }
 

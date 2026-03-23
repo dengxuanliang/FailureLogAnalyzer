@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 
 const apiClientMock: any = {
   get: jest.fn(),
+  post: jest.fn(),
 };
 
 await jest.unstable_mockModule("../client", () => ({
@@ -12,7 +13,7 @@ await jest.unstable_mockModule("../client", () => ({
   default: apiClientMock,
 }));
 
-const { useReportDetail, useReportExport, useReports } = await import("./reports");
+const { useGenerateReport, useReportDetail, useReportExport, useReports } = await import("./reports");
 
 const createWrapper = () => {
   const queryClient = new QueryClient({
@@ -75,4 +76,28 @@ describe("report query hooks", () => {
       responseType: "blob",
     });
   });
+  it("triggers report generation", async () => {
+    apiClientMock.post.mockResolvedValueOnce({
+      data: { report_id: "r-new", status: "pending", message: "queued" },
+    });
+
+    const { result } = renderHook(() => useGenerateReport(), { wrapper: createWrapper() });
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        title: "Nightly summary",
+        report_type: "summary",
+        benchmark: "mmlu",
+        model_version: "v1",
+      });
+    });
+
+    expect(apiClientMock.post).toHaveBeenCalledWith("/reports/generate", {
+      title: "Nightly summary",
+      report_type: "summary",
+      benchmark: "mmlu",
+      model_version: "v1",
+    });
+  });
+
 });

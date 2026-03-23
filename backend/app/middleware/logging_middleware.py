@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import traceback
 import uuid
 
 import structlog
@@ -32,7 +33,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
             return response
         except Exception as exc:  # pragma: no cover - defensive
-            logger.error("unhandled_exception", exc_info=exc)
+            logger.error("unhandled_exception", error=str(exc), traceback=traceback.format_exc())
             raise
         finally:
             duration_ms = round((time.perf_counter() - start) * 1000, 1)

@@ -15,7 +15,9 @@ await jest.unstable_mockModule("../client", () => ({
 
 const {
   useIngestUpload,
+  useIngestJobs,
   useIngestJobStatusQueries,
+  useLlmJobs,
   useLlmJobStatusQueries,
   useLlmStrategies,
   useTriggerLlmJob,
@@ -74,23 +76,76 @@ describe("operations query hooks", () => {
     expect(options.body).toBeInstanceOf(globalThis.FormData);
   });
 
-  it("polls ingest and llm job statuses for tracked jobs", async () => {
-    apiClientMock.get.mockImplementation(async (url: string) => ({ data: { job_id: url, status: "pending" } }));
+  it("lists ingest and llm jobs from backend and polls tracked job statuses", async () => {
+    apiClientMock.get.mockImplementation(async (url: string) => {
+      if (url === "/ingest/jobs") {
+        return {
+          data: {
+            items: [
+              {
+                job_id: "ing-known-1",
+                session_id: "sess-known-1",
+                file_path: "/tmp/known.jsonl",
+                status: "running",
+                processed: 4,
+                total: 10,
+                total_written: 4,
+                total_skipped: 0,
+                reason: "",
+                created_at: 10,
+              },
+            ],
+            total: 1,
+          },
+        };
+      }
+      if (url === "/llm/jobs") {
+        return {
+          data: [
+            {
+              job_id: "llm-known-1",
+              session_id: "sess-known-1",
+              strategy_id: "strategy-1",
+              status: "queued",
+              processed: 0,
+              total: null,
+              succeeded: 0,
+              failed: 0,
+              total_cost: 0,
+              reason: "",
+              stop_reason: null,
+              created_at: 10,
+              updated_at: 10,
+            },
+          ],
+        };
+      }
+
+      return { data: { job_id: url, status: "pending" } };
+    });
 
     const { result } = renderHook(
       () => ({
+        ingestJobs: useIngestJobs(),
         ingest: useIngestJobStatusQueries(["ing-1", "ing-2"]),
+        llmJobs: useLlmJobs(),
         llm: useLlmJobStatusQueries(["llm-1"]),
       }),
       { wrapper: createWrapper() },
     );
 
     await waitFor(() => {
+      expect(result.current.ingestJobs.isSuccess).toBe(true);
       expect(result.current.ingest[0]?.isSuccess).toBe(true);
       expect(result.current.ingest[1]?.isSuccess).toBe(true);
+      expect(result.current.llmJobs.isSuccess).toBe(true);
       expect(result.current.llm[0]?.isSuccess).toBe(true);
     });
 
+    expect(result.current.ingestJobs.data?.items).toHaveLength(1);
+    expect(result.current.llmJobs.data).toHaveLength(1);
+    expect(apiClientMock.get).toHaveBeenCalledWith("/ingest/jobs");
+    expect(apiClientMock.get).toHaveBeenCalledWith("/llm/jobs");
     expect(apiClientMock.get).toHaveBeenCalledWith("/ingest/ing-1/status");
     expect(apiClientMock.get).toHaveBeenCalledWith("/ingest/ing-2/status");
     expect(apiClientMock.get).toHaveBeenCalledWith("/llm/jobs/llm-1/status");

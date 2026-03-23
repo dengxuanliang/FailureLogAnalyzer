@@ -1,12 +1,15 @@
 import { useMemo, useState } from "react";
-import { Button, Card, Input, Select, Space, Table, Typography } from "antd";
+import { Button, Card, Input, Select, Space, Table, Tag, Typography } from "antd";
 import {
+  useIngestJobs,
   useIngestJobStatusQueries,
   useIngestUpload,
+  useLlmJobs,
   useLlmJobStatusQueries,
   useLlmStrategies,
   useTriggerLlmJob,
 } from "@/api/queries/operations";
+import type { IngestJobStatus, LlmJobStatus } from "@/types/api";
 
 const { Title, Text } = Typography;
 
@@ -16,23 +19,39 @@ export default function Operations() {
   const [modelVersion, setModelVersion] = useState("");
   const [file, setFile] = useState<globalThis.File | null>(null);
   const [latestSessionId, setLatestSessionId] = useState("");
+  const [selectedStrategyId, setSelectedStrategyId] = useState<string | undefined>(undefined);
   const [ingestJobIds, setIngestJobIds] = useState<string[]>([]);
   const [llmJobIds, setLlmJobIds] = useState<string[]>([]);
 
   const ingestUpload = useIngestUpload();
   const triggerLlmJob = useTriggerLlmJob();
   const strategies = useLlmStrategies();
+  const ingestJobsQuery = useIngestJobs();
+  const llmJobsQuery = useLlmJobs();
   const ingestQueries = useIngestJobStatusQueries(ingestJobIds);
   const llmQueries = useLlmJobStatusQueries(llmJobIds);
 
-  const ingestJobs = useMemo(
-    () => ingestQueries.map((query) => query.data).filter(Boolean),
-    [ingestQueries],
-  );
-  const llmJobs = useMemo(
-    () => llmQueries.map((query) => query.data).filter(Boolean),
-    [llmQueries],
-  );
+  const ingestJobs = useMemo(() => {
+    const knownJobs = ingestJobsQuery.data?.items ?? [];
+    const trackedJobs = ingestQueries.map((query) => query.data).filter(Boolean) as IngestJobStatus[];
+    return [...trackedJobs, ...knownJobs].reduce<IngestJobStatus[]>((acc, current) => {
+      if (!acc.some((existing) => existing.job_id === current.job_id)) {
+        acc.push(current);
+      }
+      return acc;
+    }, []);
+  }, [ingestJobsQuery.data?.items, ingestQueries]);
+
+  const llmJobs = useMemo(() => {
+    const knownJobs = llmJobsQuery.data ?? [];
+    const trackedJobs = llmQueries.map((query) => query.data).filter(Boolean) as LlmJobStatus[];
+    return [...trackedJobs, ...knownJobs].reduce<LlmJobStatus[]>((acc, current) => {
+      if (!acc.some((existing) => existing.job_id === current.job_id)) {
+        acc.push(current);
+      }
+      return acc;
+    }, []);
+  }, [llmJobsQuery.data, llmQueries]);
 
   const handleUpload = async () => {
     if (!file) {
@@ -50,7 +69,7 @@ export default function Operations() {
   };
 
   const handleTriggerLlm = async () => {
-    const strategyId = strategies.data?.[0]?.id;
+    const strategyId = selectedStrategyId ?? strategies.data?.[0]?.id;
     if (!latestSessionId || !strategyId) {
       return;
     }
@@ -104,11 +123,12 @@ export default function Operations() {
             LLM Strategy
             <Select
               aria-label="LLM Strategy"
-              value={strategies.data?.[0]?.id}
+              value={selectedStrategyId ?? strategies.data?.[0]?.id}
               options={(strategies.data ?? []).map((strategy) => ({
                 value: strategy.id,
                 label: strategy.name,
               }))}
+              onChange={(value) => setSelectedStrategyId(value)}
             />
           </label>
           <Button onClick={() => void handleTriggerLlm()} loading={triggerLlmJob.isPending}>
@@ -129,7 +149,34 @@ export default function Operations() {
               columns={[
                 { title: "Job ID", dataIndex: "job_id", key: "job_id" },
                 { title: "Session", dataIndex: "session_id", key: "session_id" },
-                { title: "Status", dataIndex: "status", key: "status" },
+                {
+                  title: "Status",
+                  dataIndex: "status",
+                  key: "status",
+                  render: (value: string) => (
+                    <Tag color={value === "failed" ? "error" : value === "done" ? "success" : "processing"}>
+                      {value}
+                    </Tag>
+                  ),
+                },
+                {
+                  title: "Progress",
+                  key: "progress",
+                  render: (_: unknown, record: IngestJobStatus) =>
+                    `${record.processed}/${record.total ?? "?"}`,
+                },
+                {
+                  title: "Written/Skipped",
+                  key: "written_skipped",
+                  render: (_: unknown, record: IngestJobStatus) =>
+                    `${record.total_written}/${record.total_skipped}`,
+                },
+                { title: "File", dataIndex: "file_path", key: "file_path" },
+                {
+                  title: "Reason",
+                  key: "reason",
+                  render: (_: unknown, record: IngestJobStatus) => record.reason || "-",
+                },
               ]}
             />
           </div>
@@ -143,7 +190,42 @@ export default function Operations() {
               columns={[
                 { title: "Job ID", dataIndex: "job_id", key: "job_id" },
                 { title: "Session", dataIndex: "session_id", key: "session_id" },
-                { title: "Status", dataIndex: "status", key: "status" },
+                {
+                  title: "Status",
+                  dataIndex: "status",
+                  key: "status",
+                  render: (value: string) => (
+                    <Tag color={value === "failed" ? "error" : value === "done" ? "success" : "processing"}>
+                      {value}
+                    </Tag>
+                  ),
+                },
+                { title: "Strategy", dataIndex: "strategy_id", key: "strategy_id" },
+                {
+                  title: "Progress",
+                  key: "progress",
+                  render: (_: unknown, record: LlmJobStatus) => `${record.processed}/${record.total ?? "?"}`,
+                },
+                {
+                  title: "Succeeded/Failed",
+                  key: "succeeded_failed",
+                  render: (_: unknown, record: LlmJobStatus) => `${record.succeeded}/${record.failed}`,
+                },
+                {
+                  title: "Cost",
+                  key: "cost",
+                  render: (_: unknown, record: LlmJobStatus) => record.total_cost.toFixed(4),
+                },
+                {
+                  title: "Stop Reason",
+                  key: "stop_reason",
+                  render: (_: unknown, record: LlmJobStatus) => record.stop_reason ?? "-",
+                },
+                {
+                  title: "Reason",
+                  key: "reason",
+                  render: (_: unknown, record: LlmJobStatus) => record.reason || "-",
+                },
               ]}
             />
           </div>

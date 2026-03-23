@@ -37,6 +37,7 @@ from app.llm.record_selector import select_records
 from app.llm.schemas import PromptContext
 from app.rules.base import RuleContext, RuleResult
 from app.services.provider_secret_crypto import decrypt_secret
+from app.tasks.async_runner import run_async_in_worker
 from app.rules.custom import CustomRule
 from app.rules.registry import RuleRegistry
 
@@ -204,7 +205,7 @@ def run_rules(self, session_id: str, rule_ids: Optional[list[str]] = None) -> di
     """
     try:
         logger.info("run_rules task started", extra={"session_id": session_id, "rule_ids": rule_ids})
-        return asyncio.run(_run_rules_for_session_async(session_id=session_id, rule_ids=rule_ids))
+        return run_async_in_worker(_run_rules_for_session_async(session_id=session_id, rule_ids=rule_ids))
     except Exception as exc:
         logger.exception("run_rules task failed", extra={"session_id": session_id, "rule_ids": rule_ids})
         raise self.retry(exc=exc)
@@ -662,7 +663,7 @@ def run_llm_judge(
 ) -> dict:
     """Celery task: run LLM judge on selected records in one session."""
     try:
-        return asyncio.run(
+        return run_async_in_worker(
             _run_llm_judge_for_session_async(
                 session_id=session_id,
                 strategy_id=strategy_id,

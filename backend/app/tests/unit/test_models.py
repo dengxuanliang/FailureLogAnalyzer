@@ -19,6 +19,7 @@ def test_user_columns():
     assert {"id", "username", "email", "password_hash", "role",
             "is_active", "created_at", "updated_at"}.issubset(cols)
 
+
 def test_eval_record_has_jsonb_fields():
     cols = {c.name for c in EvalRecord.__table__.columns}
     assert "metadata" in cols

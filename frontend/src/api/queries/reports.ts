@@ -1,6 +1,12 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import apiClient from "../client";
-import type { ReportDetail, ReportExportPayload, ReportListItem } from "@/types/api";
+import type {
+  ReportDetail,
+  ReportExportPayload,
+  ReportGeneratePayload,
+  ReportGenerateResponse,
+  ReportListItem,
+} from "@/types/api";
 
 const REPORTS_KEY = ["reports"] as const;
 
@@ -35,6 +41,20 @@ export function useReportExport() {
         }
       }
       return { blob: response.data, filename };
+    },
+  });
+}
+
+export function useGenerateReport() {
+  const queryClient = useQueryClient();
+
+  return useMutation<ReportGenerateResponse, Error, ReportGeneratePayload>({
+    mutationFn: async (payload) => {
+      const response = await apiClient.post<ReportGenerateResponse>("/reports/generate", payload);
+      return response.data;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: REPORTS_KEY });
     },
   });
 }

@@ -86,7 +86,8 @@ async def get_session_detail(
     if session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
     base = _to_session_item(session)
-    return SessionDetailResponse(**base.model_dump(), updated_at=session.updated_at)
+    updated_at = getattr(session, "updated_at", None) or session.created_at
+    return SessionDetailResponse(**base.model_dump(), updated_at=updated_at)
 
 
 @router.delete("/sessions/{session_id}", response_model=SessionDeleteResponse)
