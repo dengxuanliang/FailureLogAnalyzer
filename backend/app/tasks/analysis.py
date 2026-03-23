@@ -21,6 +21,7 @@ from app.db.models.enums import AnalysisType, SeverityLevel, TagSource
 from app.db.models.error_tag import ErrorTag
 from app.db.models.eval_record import EvalRecord
 from app.db.models.prompt_template import PromptTemplate
+from app.db.models.provider_secret import ProviderSecret
 from app.db.session import get_async_session
 from app.ingestion.progress import ProgressPublisher
 from app.llm.budget_tracker import BudgetTracker
@@ -35,6 +36,7 @@ from app.llm.rate_limiter import AsyncRateLimiter
 from app.llm.record_selector import select_records
 from app.llm.schemas import PromptContext
 from app.rules.base import RuleContext, RuleResult
+from app.services.provider_secret_crypto import decrypt_secret
 from app.rules.custom import CustomRule
 from app.rules.registry import RuleRegistry
 
@@ -344,23 +346,43 @@ def _severity_from_str(value: str | None) -> SeverityLevel | None:
     return None
 
 
-def _resolve_provider_api_key(provider_name: str) -> str:
+async def _resolve_provider_api_key(db, provider_name: str) -> str:
     normalized = provider_name.lower()
-    if normalized in {"openai", "local"}:
-        key = os.getenv("OPENAI_API_KEY", "")
-        if normalized == "local":
-            return key
-        if key:
-            return key
-        raise ValueError("OPENAI_API_KEY is required for openai provider")
 
-    if normalized == "claude":
-        key = os.getenv("ANTHROPIC_API_KEY", "")
-        if key:
-            return key
-        raise ValueError("ANTHROPIC_API_KEY is required for claude provider")
+    provider_aliases: dict[str, list[str]] = {
+        "openai": ["openai"],
+        "local": ["local", "openai"],
+        "claude": ["claude", "anthropic"],
+        "anthropic": ["anthropic", "claude"],
+    }
+    env_var_names: dict[str, str] = {
+        "openai": "OPENAI_API_KEY",
+        "local": "OPENAI_API_KEY",
+        "claude": "ANTHROPIC_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+    }
 
-    raise ValueError(f"Unsupported provider: {provider_name!r}")
+    aliases = provider_aliases.get(normalized)
+    env_var = env_var_names.get(normalized)
+    if aliases is None or env_var is None:
+        raise ValueError(f"Unsupported provider: {provider_name!r}")
+
+    row = None
+    if hasattr(db, "execute"):
+        stmt = (
+            select(ProviderSecret)
+            .where(ProviderSecret.provider.in_(aliases), ProviderSecret.is_active.is_(True))
+            .order_by(ProviderSecret.is_default.desc(), ProviderSecret.updated_at.desc())
+            .limit(1)
+        )
+        row = (await db.execute(stmt)).scalars().first()
+    if row is not None:
+        return decrypt_secret(row.encrypted_secret)
+
+    key = os.getenv(env_var, "")
+    if key:
+        return key
+    raise ValueError(f"{env_var} is required for {normalized} provider")
 
 
 async def _get_existing_daily_spend(db, *, model: str | None = None) -> float:
@@ -490,7 +512,7 @@ async def _run_llm_judge_for_session_async(
                 base_url = strategy.config.get("base_url")
             provider = create_provider(
                 provider_name=provider_name,
-                api_key=_resolve_provider_api_key(provider_name),
+                api_key=await _resolve_provider_api_key(db, provider_name),
                 model=model_name,
                 base_url=base_url,
             )
