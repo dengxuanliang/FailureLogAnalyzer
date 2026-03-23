@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Severity(str, Enum):
@@ -25,6 +25,8 @@ class LlmJudgeOutput(BaseModel):
 
 class PromptContext(BaseModel):
     """Available template variables while rendering prompts."""
+
+    model_config = ConfigDict(protected_namespaces=())
 
     question: str
     expected: str

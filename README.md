@@ -125,6 +125,18 @@ docker compose ps
 DEMO_USERNAME=demo DEMO_EMAIL=demo@example.com DEMO_PASSWORD='StrongerPass123' ./scripts/dev-create-admin.sh
 ```
 
+> **或：一次性 Bootstrap API（仅在用户表为空时可用）**
+>
+> 首次启动且数据库没有任何用户时，可以直接调用：
+>
+> ```bash
+> curl -X POST http://localhost:8000/api/v1/auth/bootstrap \
+>   -H "Content-Type: application/json" \
+>   -d '{"username":"admin","email":"admin@example.com","password":"admin123456"}'
+> ```
+>
+> 一旦已有用户存在，该接口会返回 **409**，不会再创建 bootstrap 管理员。
+
 ### 3) 登录前端
 
 打开 http://localhost:3000 ，使用上面的账号登录。
@@ -133,10 +145,11 @@ DEMO_USERNAME=demo DEMO_EMAIL=demo@example.com DEMO_PASSWORD='StrongerPass123' .
 
 > 当前后端已支持上传与摄入，但前端还没有独立上传页；**演示前请先用 API 上传日志**。
 
-先确认可用 adapter：
+先登录拿到 JWT，再确认可用 adapter：
 
 ```bash
-curl -s http://localhost:8000/api/v1/ingest/adapters | jq .
+curl -s http://localhost:8000/api/v1/ingest/adapters \
+  -H "Authorization: Bearer <YOUR_JWT>" | jq .
 ```
 
 最通用的本地上传格式是 `generic_jsonl`，每行至少建议包含这些字段：
@@ -167,9 +180,11 @@ curl -s http://localhost:8000/api/v1/ingest/<job_id>/status | jq .
 
 1. `docker compose up --build -d`
 2. `./scripts/dev-create-admin.sh`
-3. 用 API 上传一份 JSONL 日志
-4. 登录前端
-5. 演示：
+3. `./scripts/dev-seed-defaults.sh`（初始化默认 Rules / Strategies / Prompt Templates）
+4. `./scripts/dev-seed-demo.sh`（可选：快速生成演示会话/错误数据）
+5. 用 API 上传一份 JSONL 日志（或跳过，直接使用 demo seed 数据）
+6. 登录前端
+7. 演示：
    - Overview
    - Analysis
    - Compare

@@ -10,6 +10,7 @@ from app.ingestion.adapters.registry import get_adapter, auto_detect_adapter
 from app.ingestion.db_writer import BatchWriter
 from app.ingestion.parsers import parse_jsonl, parse_large_json
 from app.ingestion.progress import ProgressPublisher
+from app.ingestion.session_store import ensure_eval_session
 from app.db.session import get_async_session
 from app.core.redis import get_redis
 from app.core.metrics import (
@@ -71,6 +72,13 @@ async def _run_parse(
 
     try:
         async with get_async_session() as db_session:
+            await ensure_eval_session(
+                session=db_session,
+                session_id=session_id,
+                benchmark=benchmark,
+                model=model,
+                model_version=model_version,
+            )
             async with BatchWriter(session=db_session) as writer:
                 for raw in parser(file_path):
                     try:

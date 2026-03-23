@@ -28,6 +28,8 @@ class SessionListItem(BaseModel):
     tags: list[str]
     created_at: datetime
 
+    model_config = {"protected_namespaces": ()}
+
 
 @router.get("/sessions", response_model=list[SessionListItem])
 async def list_sessions(

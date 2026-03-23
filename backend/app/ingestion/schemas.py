@@ -1,10 +1,11 @@
 from __future__ import annotations
 import hashlib
 from typing import Any
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class NormalizedRecord(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
     """Standard representation of one evaluation record across all benchmarks."""
     session_id: str
     benchmark: str

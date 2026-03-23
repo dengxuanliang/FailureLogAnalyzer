@@ -50,7 +50,7 @@ def test_parse_file_runs_synchronously(sample_jsonl):
             kwargs={
                 "adapter_name": "generic_jsonl",
                 "job_id": "test-job-1",
-                "session_id": "sess-abc",
+                "session_id": "11111111-1111-1111-1111-111111111111",
                 "benchmark": "generic",
                 "model": "test-model",
                 "model_version": "v1",
@@ -105,7 +105,7 @@ async def test_run_parse_updates_ingest_metrics_for_write_skip_and_normalize_fai
             file_path=str(input_file),
             adapter_name="generic_jsonl",
             job_id="job-1",
-            session_id="session-1",
+            session_id="22222222-2222-2222-2222-222222222222",
             benchmark="mmlu",
             model="model-x",
             model_version="v1",
@@ -121,6 +121,56 @@ async def test_run_parse_updates_ingest_metrics_for_write_skip_and_normalize_fai
     assert mock_failures.inc.call_count == 1
     mock_bytes.labels.assert_called_once_with(benchmark="mmlu")
     mock_bytes.labels.return_value.inc.assert_called_once_with(input_file.stat().st_size)
+
+
+@pytest.mark.asyncio
+async def test_run_parse_ensures_eval_session_exists_before_writing(tmp_path):
+    input_file = tmp_path / "input.jsonl"
+    input_file.write_text('{"k":"v"}\n')
+
+    fake_db_session = AsyncMock()
+    db_session_ctx = MagicMock()
+    db_session_ctx.__aenter__ = AsyncMock(return_value=fake_db_session)
+    db_session_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    adapter = MagicMock()
+    adapter.normalize.return_value = {"normalized": True}
+
+    writer = MagicMock()
+    writer.__aenter__ = AsyncMock(return_value=writer)
+    writer.__aexit__ = AsyncMock(return_value=False)
+    writer.add = AsyncMock()
+    writer.total_written = 1
+    writer.total_skipped = 0
+
+    publisher = AsyncMock()
+
+    with (
+        patch("app.tasks.ingest._get_parser", return_value=lambda _: iter([{"id": 1}])),
+        patch("app.tasks.ingest.get_adapter", return_value=adapter),
+        patch("app.tasks.ingest.get_async_session", return_value=db_session_ctx),
+        patch("app.tasks.ingest.BatchWriter", return_value=writer),
+        patch("app.tasks.ingest.get_redis", new=AsyncMock(return_value=AsyncMock())),
+        patch("app.tasks.ingest.ProgressPublisher", return_value=publisher),
+        patch("app.tasks.ingest.ensure_eval_session", new=AsyncMock(), create=True) as mock_ensure_session,
+    ):
+        await _run_parse(
+            file_path=str(input_file),
+            adapter_name="generic_jsonl",
+            job_id="job-ensure-session",
+            session_id="22222222-2222-2222-2222-222222222222",
+            benchmark="mmlu",
+            model="model-x",
+            model_version="v1",
+        )
+
+    mock_ensure_session.assert_awaited_once_with(
+        session=fake_db_session,
+        session_id="22222222-2222-2222-2222-222222222222",
+        benchmark="mmlu",
+        model="model-x",
+        model_version="v1",
+    )
 
 
 @pytest.mark.asyncio
@@ -154,7 +204,7 @@ async def test_run_parse_marks_failure_metric_on_fatal_error(tmp_path):
                 file_path=str(input_file),
                 adapter_name="generic_jsonl",
                 job_id="job-fail",
-                session_id="session-1",
+                session_id="22222222-2222-2222-2222-222222222222",
                 benchmark="mmlu",
                 model="model-x",
                 model_version="v1",

@@ -5,6 +5,8 @@ import orjson
 from dataclasses import dataclass, field
 from typing import Literal
 
+from app.ingestion.job_store import update_job_from_event
+
 logger = logging.getLogger(__name__)
 
 _PROGRESS_CHANNEL_PREFIX = "progress"
@@ -64,18 +66,39 @@ class ProgressPublisher:
             speed_rps=speed_rps,
         )
         await self._redis.publish(self._channel, event.to_json())
+        await update_job_from_event(
+            self._redis,
+            self._job_id,
+            {
+                "status": "running",
+                "processed": processed,
+                "total": total,
+            },
+        )
 
     async def complete(self, total_written: int, total_skipped: int) -> None:
+        total = total_written + total_skipped
         event = ProgressEvent(
             job_id=self._job_id,
-            processed=total_written + total_skipped,
-            total=total_written + total_skipped,
+            processed=total,
+            total=total,
             speed_rps=0.0,
             status="done",
             total_written=total_written,
             total_skipped=total_skipped,
         )
         await self._redis.publish(self._channel, event.to_json())
+        await update_job_from_event(
+            self._redis,
+            self._job_id,
+            {
+                "status": "done",
+                "processed": total,
+                "total": total,
+                "total_written": total_written,
+                "total_skipped": total_skipped,
+            },
+        )
 
     async def fail(self, reason: str) -> None:
         event = ProgressEvent(
@@ -87,3 +110,15 @@ class ProgressPublisher:
             reason=reason,
         )
         await self._redis.publish(self._channel, event.to_json())
+        await update_job_from_event(
+            self._redis,
+            self._job_id,
+            {
+                "status": "failed",
+                "reason": reason,
+                "processed": 0,
+                "total": None,
+                "total_written": 0,
+                "total_skipped": 0,
+            },
+        )

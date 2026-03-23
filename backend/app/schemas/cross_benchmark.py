@@ -25,6 +25,8 @@ class TrendDataPoint(BaseModel):
     benchmark: str | None = None
     model_version: str | None = None
 
+    model_config = {"protected_namespaces": ()}
+
 
 class ErrorTrends(BaseModel):
     data_points: list[TrendDataPoint] = Field(default_factory=list)

@@ -20,6 +20,8 @@ class ReportGenerateRequest(BaseModel):
     version_a: str | None = None
     version_b: str | None = None
 
+    model_config = {"protected_namespaces": ()}
+
     @model_validator(mode="after")
     def validate_comparison_fields(self) -> "ReportGenerateRequest":
         if self.report_type == ReportType.comparison and (not self.version_a or not self.version_b):
@@ -44,7 +46,7 @@ class ReportListItem(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "protected_namespaces": ()}
 
 
 class ReportResponse(ReportListItem):
@@ -54,4 +56,4 @@ class ReportResponse(ReportListItem):
     content: dict[str, Any] = Field(default_factory=dict)
     error_message: str | None = None
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "protected_namespaces": ()}

@@ -1,6 +1,9 @@
 import pytest
 import io
+import importlib
+import warnings
 from unittest.mock import patch, MagicMock, AsyncMock
+from fastapi import UploadFile
 
 from app.api.v1.deps import get_current_user
 from app.db.models.user import User
@@ -37,6 +40,7 @@ async def test_upload_returns_job_id(async_client):
         content = b'{"question_id":"q1","question":"x","expected_answer":"a","model_answer":"b","is_correct":false}\n'
 
         with patch("app.api.v1.ingest.parse_file") as mock_task, \
+             patch("app.api.v1.ingest.ensure_eval_session", new=AsyncMock()), \
              patch("app.api.v1.ingest.save_upload_file", new=AsyncMock(return_value="/tmp/upload/test.jsonl")), \
              patch("app.api.v1.ingest.create_job", new=AsyncMock(return_value=None)), \
              patch("app.api.v1.ingest.get_redis", new=AsyncMock(return_value=AsyncMock())):
@@ -58,6 +62,40 @@ async def test_upload_returns_job_id(async_client):
     body = resp.json()
     assert "job_id" in body
     assert "session_id" in body
+
+
+@pytest.mark.asyncio
+async def test_upload_file_creates_eval_session_before_queueing():
+    from app.api.v1.ingest import upload_file
+
+    content = b'{"question_id":"q1"}\n'
+    upload = UploadFile(filename="test.jsonl", file=io.BytesIO(content))
+    redis = AsyncMock()
+
+    with (
+        patch("app.api.v1.ingest.ensure_eval_session", new=AsyncMock(), create=True) as mock_ensure_session,
+        patch("app.api.v1.ingest.save_upload_file", new=AsyncMock(return_value="/tmp/upload/test.jsonl")),
+        patch("app.api.v1.ingest.create_job", new=AsyncMock(return_value=None)),
+        patch("app.api.v1.ingest.get_redis", new=AsyncMock(return_value=redis)),
+        patch("app.api.v1.ingest.parse_file") as mock_task,
+    ):
+        mock_task.delay.return_value = MagicMock(id="celery-task-1")
+        response = await upload_file(
+            file=upload,
+            benchmark="generic",
+            model="test-model",
+            version="v1",
+            adapter_name=None,
+            session_id=None,
+            current_user=_fake_user(),
+        )
+
+    await upload.close()
+    mock_ensure_session.assert_awaited_once()
+    assert mock_ensure_session.await_args.kwargs["session_id"] == response.session_id
+    assert mock_ensure_session.await_args.kwargs["benchmark"] == "generic"
+    assert mock_ensure_session.await_args.kwargs["model"] == "test-model"
+    assert mock_ensure_session.await_args.kwargs["model_version"] == "v1"
 
 
 @pytest.mark.asyncio
@@ -121,6 +159,7 @@ async def test_directory_ingest_queues_multiple_jobs(async_client, tmp_path):
             f.write_text('{"question_id":"q1","question":"x","expected_answer":"a","model_answer":"b","is_correct":false}\n')
 
         with patch("app.api.v1.ingest.parse_file") as mock_task, \
+             patch("app.api.v1.ingest.ensure_eval_session", new=AsyncMock()), \
              patch("app.api.v1.ingest.create_job", new=AsyncMock(return_value=None)), \
              patch("app.api.v1.ingest.get_redis", new=AsyncMock(return_value=AsyncMock())), \
              patch("app.api.v1.ingest.settings") as mock_settings:
@@ -222,3 +261,19 @@ async def test_list_ingest_adapters(async_client):
     assert len(body) >= 1
     first = body[0]
     assert set(first.keys()) == {"name", "description", "detected_fields", "is_builtin"}
+
+
+def test_ingest_module_import_has_no_protected_namespace_warnings():
+    import app.api.v1.ingest as ingest_module
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        importlib.reload(ingest_module)
+
+    protected_namespace_warnings = [
+        w
+        for w in caught
+        if issubclass(w.category, UserWarning)
+        and "protected namespace" in str(w.message)
+    ]
+    assert protected_namespace_warnings == []

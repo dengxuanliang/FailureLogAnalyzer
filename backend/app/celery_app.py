@@ -11,6 +11,7 @@ celery_app.conf.task_serializer = "json"
 celery_app.conf.result_serializer = "json"
 celery_app.conf.accept_content = ["json"]
 celery_app.conf.task_track_started = True
+celery_app.conf.broker_connection_retry_on_startup = True
 celery_app.autodiscover_tasks(["app.tasks"])
 
 # register signal handlers

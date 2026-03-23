@@ -7,15 +7,17 @@ from typing import Annotated
 import aiofiles
 import aiofiles.os
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.core.redis import get_redis
 from app.api.v1.deps import get_current_user
 from app.db.models.user import User
+from app.db.session import get_async_session
 from app.ingestion.directory_watcher import DirectoryWatcher
 from app.ingestion.adapters.registry import AdapterRegistry
 from app.ingestion.job_store import create_job, get_job_status
+from app.ingestion.session_store import ensure_eval_session
 from app.tasks.ingest import parse_file
 
 logger = logging.getLogger(__name__)
@@ -45,7 +47,7 @@ class DirectoryRequest(BaseModel):
     directory_path: str
     benchmark: str
     model: str
-    model_version: str
+    version: str = Field(alias="model_version")
     adapter_name: str | None = None
     session_id: str | None = None
 
@@ -59,7 +61,7 @@ class WatcherStartRequest(BaseModel):
     watch_dir: str
     benchmark: str = "auto"
     model: str = "unknown"
-    model_version: str = "unknown"
+    version: str = Field(default="unknown", alias="model_version")
     adapter_name: str | None = None
     recursive: bool = True
 
@@ -103,7 +105,7 @@ async def upload_file(
     file: Annotated[UploadFile, File()],
     benchmark: Annotated[str, Form()],
     model: Annotated[str, Form()],
-    model_version: Annotated[str, Form()],
+    version: Annotated[str, Form(alias="model_version")],
     adapter_name: Annotated[str | None, Form()] = None,
     session_id: Annotated[str | None, Form()] = None,
     current_user: User = Depends(get_current_user),
@@ -125,6 +127,21 @@ async def upload_file(
 
     file_path = await save_upload_file(file, _UPLOAD_DIR / resolved_session_id)
 
+    try:
+        async with get_async_session() as db_session:
+            await ensure_eval_session(
+                session=db_session,
+                session_id=resolved_session_id,
+                benchmark=benchmark,
+                model=model,
+                model_version=version,
+            )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"session_id must be a UUID: {exc}",
+        ) from exc
+
     redis = await get_redis()
     await create_job(
         redis, job_id=job_id, session_id=resolved_session_id, file_path=file_path
@@ -137,7 +154,7 @@ async def upload_file(
         session_id=resolved_session_id,
         benchmark=benchmark,
         model=model,
-        model_version=model_version,
+        model_version=version,
     )
 
     return UploadResponse(
@@ -178,6 +195,21 @@ async def ingest_directory(
         )
 
     session_id = body.session_id or str(uuid.uuid4())
+    try:
+        async with get_async_session() as db_session:
+            await ensure_eval_session(
+                session=db_session,
+                session_id=session_id,
+                benchmark=body.benchmark,
+                model=body.model,
+                model_version=body.version,
+            )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"session_id must be a UUID: {exc}",
+        ) from exc
+
     redis = await get_redis()
     jobs = []
 
@@ -193,7 +225,7 @@ async def ingest_directory(
             session_id=session_id,
             benchmark=body.benchmark,
             model=body.model,
-            model_version=body.model_version,
+            model_version=body.version,
         )
         jobs.append({"job_id": job_id, "file": file_path.name})
 
@@ -216,7 +248,7 @@ async def start_watcher(
         watch_dir=body.watch_dir,
         benchmark=body.benchmark,
         model=body.model,
-        model_version=body.model_version,
+        model_version=body.version,
         adapter_name=body.adapter_name,
         recursive=body.recursive,
     )

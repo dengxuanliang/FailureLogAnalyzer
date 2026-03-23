@@ -31,19 +31,40 @@ async def create_job(redis, job_id: str, session_id: str, file_path: str) -> Non
 
 
 async def get_job_status(redis, job_id: str) -> dict | None:
-    raw = await redis.get(_key(job_id))
+    getter = getattr(redis, "get", None)
+    if not callable(getter):
+        return None
+    raw = await getter(_key(job_id))
     if raw is None:
         return None
-    return orjson.loads(raw)
+    if not isinstance(raw, (bytes, bytearray, memoryview, str)):
+        return None
+    try:
+        decoded = orjson.loads(raw)
+    except orjson.JSONDecodeError:
+        return None
+    if not isinstance(decoded, dict):
+        return None
+    return decoded
 
 
 async def update_job_from_event(redis, job_id: str, event: dict) -> None:
     """Merge a progress event dict into the stored job status."""
-    raw = await redis.get(_key(job_id))
+    getter = getattr(redis, "get", None)
+    setter = getattr(redis, "set", None)
+    if not callable(getter) or not callable(setter):
+        return
+
+    raw = await getter(_key(job_id))
     if raw is None:
         return
-    current = orjson.loads(raw)
+    if not isinstance(raw, (bytes, bytearray, memoryview, str)):
+        return
+    try:
+        current = orjson.loads(raw)
+    except orjson.JSONDecodeError:
+        return
     current.update({k: v for k, v in event.items() if k in (
         "status", "processed", "total", "total_written", "total_skipped", "reason"
     )})
-    await redis.set(_key(job_id), orjson.dumps(current), ex=_JOB_TTL_SECONDS)
+    await setter(_key(job_id), orjson.dumps(current), ex=_JOB_TTL_SECONDS)
