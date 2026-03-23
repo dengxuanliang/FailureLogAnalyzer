@@ -4,6 +4,7 @@ kind: Kustomization
 namespace: fla
 
 resources:
+  - namespace.yaml
   - ../../base
 
 patches:

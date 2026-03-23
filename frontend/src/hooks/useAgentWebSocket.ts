@@ -48,9 +48,42 @@ export function useAgentWebSocket(url: string, handlers: WebSocketHandlers): Use
           return;
         }
 
-        if (payload.conversation_id) {
-          handlersRef.current.onConversationId?.(payload.conversation_id);
+        const legacyConversationId =
+          typeof event.data === "string"
+            ? (() => {
+                try {
+                  const parsed = JSON.parse(event.data) as {
+                    data?: { conversation_id?: string; messages?: ChatMessage[]; action?: ActionPayload };
+                  };
+                  return parsed.data?.conversation_id;
+                } catch {
+                  return undefined;
+                }
+              })()
+            : undefined;
+
+        const conversationId = payload.conversation_id ?? legacyConversationId;
+        if (conversationId) {
+          handlersRef.current.onConversationId?.(conversationId);
         }
+
+        const legacyPayload =
+          typeof event.data === "string"
+            ? (() => {
+                try {
+                  return JSON.parse(event.data) as {
+                    type?: string;
+                    data?: {
+                      conversation_id?: string;
+                      messages?: ChatMessage[];
+                      action?: ActionPayload;
+                    };
+                  };
+                } catch {
+                  return undefined;
+                }
+              })()
+            : undefined;
 
         switch (payload.type) {
           case "token":
@@ -61,11 +94,20 @@ export function useAgentWebSocket(url: string, handlers: WebSocketHandlers): Use
           case "message":
             if (payload.message) {
               handlersRef.current.onMessage(payload.message);
+            } else if (legacyPayload?.data?.messages?.length) {
+              const assistantMessage = [...legacyPayload.data.messages]
+                .reverse()
+                .find((message) => message.role === "assistant");
+              if (assistantMessage) {
+                handlersRef.current.onMessage(assistantMessage);
+              }
             }
             break;
           case "action":
             if (payload.action) {
               handlersRef.current.onAction(payload.action);
+            } else if (legacyPayload?.data?.action) {
+              handlersRef.current.onAction(legacyPayload.data.action);
             }
             break;
           case "done":

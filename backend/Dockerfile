@@ -1,9 +1,15 @@
-FROM python:3.11-slim
+FROM registry.access.redhat.com/ubi9/python-311:latest
+
+USER 0
 
 WORKDIR /app
 
-COPY pyproject.toml .
-RUN pip install --no-cache-dir -e ".[dev]"
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
+
+COPY requirements.txt pyproject.toml ./
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --requirement requirements.txt \
+    && pip install --no-deps .
 
 COPY . .
 

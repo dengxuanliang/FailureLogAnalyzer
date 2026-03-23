@@ -1,5 +1,6 @@
 import { jest } from "@jest/globals";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { ensureMatchMedia } from "../testUtils";
 
 ensureMatchMedia();
@@ -16,6 +17,7 @@ await jest.unstable_mockModule("react-i18next", () => ({
       ({
         "config.users.title": "用户管理",
         "config.users.create": "新建用户",
+        "config.users.loadError": "用户接口暂不可用",
         "config.users.columns.username": "用户名",
         "config.users.columns.email": "邮箱",
         "config.users.columns.role": "角色",
@@ -83,5 +85,22 @@ describe("UsersPanel", () => {
 
     expect(screen.getByText("正常")).toBeInTheDocument();
     expect(screen.getByText("已停用")).toBeInTheDocument();
+  });
+
+  it("shows an explicit error state when the users API is unavailable", async () => {
+    hooksMock.useUsers.mockReturnValue({
+      data: [],
+      isLoading: false,
+      error: new Error("missing /users api"),
+    });
+
+    render(<UsersPanel />);
+
+    expect(screen.getByText("用户接口暂不可用")).toBeInTheDocument();
+    const createButton = screen.getByRole("button", { name: "新建用户" });
+    expect(createButton).toBeDisabled();
+
+    await userEvent.click(createButton);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

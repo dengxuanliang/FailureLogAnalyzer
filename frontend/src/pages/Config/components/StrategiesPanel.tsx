@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Button, Card, Popconfirm, Space, Switch, Table, Tag } from "antd";
+import { Alert, Button, Card, Popconfirm, Space, Switch, Table, Tag } from "antd";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -16,7 +16,7 @@ export default function StrategiesPanel() {
   const { t } = useTranslation();
   const { user } = useAuth();
   const canWrite = user?.role !== "viewer";
-  const { data = [], isLoading } = useStrategies();
+  const { data = [], isLoading, error } = useStrategies();
   const createStrategy = useCreateStrategy();
   const updateStrategy = useUpdateStrategy();
   const deleteStrategy = useDeleteStrategy();
@@ -38,11 +38,20 @@ export default function StrategiesPanel() {
     <Card
       title={t("config.strategies.title")}
       extra={
-        <Button type="primary" disabled={!canWrite} onClick={() => setCreating(true)}>
+        <Button type="primary" disabled={!canWrite || !!error} onClick={() => setCreating(true)}>
           {t("config.strategies.create")}
         </Button>
       }
     >
+      {error ? (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={t("config.strategies.loadError")}
+          description={error.message}
+        />
+      ) : null}
       <Table<AnalysisStrategy>
         rowKey="id"
         loading={isLoading}

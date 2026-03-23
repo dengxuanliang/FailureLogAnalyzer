@@ -16,6 +16,7 @@ await jest.unstable_mockModule("react-i18next", () => ({
     t: (key: string, options?: Record<string, string>) =>
       ({
         "config.rules.title": "分析规则",
+        "config.rules.loadError": "分析规则接口暂不可用",
         "config.rules.create": "新建规则",
         "config.rules.columns.name": "规则名称",
         "config.rules.columns.field": "目标字段",
@@ -85,5 +86,18 @@ describe("RulesPanel", () => {
     fireEvent.click(screen.getByText("新建规则"));
 
     expect(screen.getByTestId("rule-form-modal")).toHaveTextContent("create");
+  });
+
+  it("shows an error message and disables create when loading fails", () => {
+    hooksMock.useRules.mockReturnValue({
+      data: [],
+      isLoading: false,
+      error: new Error("boom"),
+    });
+
+    render(<RulesPanel />);
+
+    expect(screen.getByText("分析规则接口暂不可用")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "新建规则" })).toBeDisabled();
   });
 });

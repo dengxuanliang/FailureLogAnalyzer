@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Button, Card, Popconfirm, Space, Table, Tag } from "antd";
+import { Alert, Button, Card, Popconfirm, Space, Table, Tag } from "antd";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -15,7 +15,7 @@ import UserFormModal from "./UserFormModal";
 export default function UsersPanel() {
   const { t } = useTranslation();
   const { user: currentUser } = useAuth();
-  const { data = [], isLoading } = useUsers();
+  const { data = [], isLoading, error } = useUsers();
   const createUser = useCreateUser();
   const updateUser = useUpdateUser();
   const [creating, setCreating] = useState(false);
@@ -35,11 +35,20 @@ export default function UsersPanel() {
     <Card
       title={t("config.users.title")}
       extra={
-        <Button type="primary" onClick={() => setCreating(true)}>
+        <Button type="primary" onClick={() => setCreating(true)} disabled={!!error}>
           {t("config.users.create")}
         </Button>
       }
     >
+      {error ? (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={t("config.users.loadError")}
+          description={error.message}
+        />
+      ) : null}
       <Table<UserInfo>
         rowKey="id"
         loading={isLoading}

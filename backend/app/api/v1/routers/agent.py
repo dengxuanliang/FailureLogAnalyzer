@@ -16,6 +16,7 @@ from app.db.session import AsyncSessionLocal, get_db
 from app.schemas.agent import AgentChatRequest, AgentChatResponse, AgentMessage
 
 router = APIRouter(prefix="/agent", tags=["agent"])
+stream_router = APIRouter(tags=["agent"])
 
 _graph = None
 
@@ -26,6 +27,19 @@ def get_graph():
     if _graph is None:
         _graph = build_graph()
     return _graph
+
+
+def _build_agent_messages(history: list[dict[str, Any]]) -> list[AgentMessage]:
+    return [
+        AgentMessage(
+            id=str(uuid.uuid4()),
+            role=message["role"],
+            content=message["content"],
+            timestamp=datetime.now(timezone.utc),
+            action=message.get("action"),
+        )
+        for message in history
+    ]
 
 
 @router.post("/chat", response_model=AgentChatResponse)
@@ -50,26 +64,22 @@ async def agent_chat(
         config={"configurable": {"thread_id": conv_id, "db": db}},
     )
 
-    messages = [
-        AgentMessage(
-            role=m["role"],
-            content=m["content"],
-            timestamp=datetime.now(timezone.utc),
-        )
-        for m in result.get("conversation_history", [])
-    ]
+    messages = _build_agent_messages(result.get("conversation_history", []))
+    action = result.get("action")
+    reply = messages[-1].content if messages else ""
 
     return AgentChatResponse(
         conversation_id=conv_id,
         messages=messages,
+        reply=reply,
+        action=action,
         current_step=result.get("current_step", ""),
         intent=result.get("intent", ""),
         needs_human_input=result.get("needs_human_input", False),
     )
 
 
-@router.websocket("/ws")
-async def agent_websocket(
+async def _agent_websocket_impl(
     websocket: WebSocket,
     token: str | None = Query(None),
 ) -> None:
@@ -93,10 +103,6 @@ async def agent_websocket(
             if data.get("filters"):
                 state["target_filters"].update(data["filters"])
 
-            await websocket.send_json(
-                {"type": "step", "data": {"step": "routing", "intent": ""}}
-            )
-
             async with AsyncSessionLocal() as db:
                 graph = get_graph()
                 result = await graph.ainvoke(
@@ -104,22 +110,48 @@ async def agent_websocket(
                     config={"configurable": {"thread_id": conv_id, "db": db}},
                 )
 
-            messages = [
-                {"role": m["role"], "content": m["content"]}
-                for m in result.get("conversation_history", [])
-            ]
+            messages = _build_agent_messages(result.get("conversation_history", []))
+            action = result.get("action")
+            assistant_message = next(
+                (message for message in reversed(messages) if message.role == "assistant"),
+                AgentMessage(
+                    id=str(uuid.uuid4()),
+                    role="assistant",
+                    content="",
+                    timestamp=datetime.now(timezone.utc),
+                ),
+            )
 
             await websocket.send_json(
                 {
                     "type": "message",
-                    "data": {
-                        "conversation_id": conv_id,
-                        "messages": messages,
-                        "current_step": result.get("current_step", ""),
-                        "intent": result.get("intent", ""),
-                        "needs_human_input": result.get("needs_human_input", False),
-                    },
+                    "conversation_id": conv_id,
+                    "message": assistant_message.model_dump(mode="json"),
                 }
             )
+            if action is not None:
+                await websocket.send_json(
+                    {
+                        "type": "action",
+                        "conversation_id": conv_id,
+                        "action": action,
+                    }
+                )
     except WebSocketDisconnect:
         return
+
+
+@router.websocket("/ws")
+async def agent_websocket_legacy(
+    websocket: WebSocket,
+    token: str | None = Query(None),
+) -> None:
+    await _agent_websocket_impl(websocket, token)
+
+
+@stream_router.websocket("/ws/agent")
+async def agent_websocket(
+    websocket: WebSocket,
+    token: str | None = Query(None),
+) -> None:
+    await _agent_websocket_impl(websocket, token)

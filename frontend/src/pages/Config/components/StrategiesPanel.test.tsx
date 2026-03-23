@@ -16,6 +16,7 @@ await jest.unstable_mockModule("react-i18next", () => ({
     t: (key: string) =>
       ({
         "config.strategies.title": "LLM 策略",
+        "config.strategies.loadError": "策略接口暂不可用",
         "config.strategies.create": "新建策略",
         "config.strategies.columns.name": "策略名称",
         "config.strategies.columns.type": "类型",
@@ -83,5 +84,18 @@ describe("StrategiesPanel", () => {
     fireEvent.click(screen.getByText("新建策略"));
 
     expect(screen.getByTestId("strategy-form-modal")).toHaveTextContent("create");
+  });
+
+  it("shows an error message and disables create when loading fails", () => {
+    hooksMock.useStrategies.mockReturnValue({
+      data: [],
+      isLoading: false,
+      error: new Error("boom"),
+    });
+
+    render(<StrategiesPanel />);
+
+    expect(screen.getByText("策略接口暂不可用")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "新建策略" })).toBeDisabled();
   });
 });

@@ -16,6 +16,7 @@ await jest.unstable_mockModule("react-i18next", () => ({
     t: (key: string) =>
       ({
         "config.templates.title": "Prompt 模板",
+        "config.templates.loadError": "模板接口暂不可用",
         "config.templates.create": "新建模板",
         "config.templates.columns.name": "模板名称",
         "config.templates.columns.benchmark": "绑定 Benchmark",
@@ -75,5 +76,18 @@ describe("TemplatesPanel", () => {
     fireEvent.click(screen.getByText("新建模板"));
 
     expect(screen.getByTestId("template-form-modal")).toHaveTextContent("create");
+  });
+
+  it("shows an error message and disables create when loading fails", () => {
+    hooksMock.useTemplates.mockReturnValue({
+      data: [],
+      isLoading: false,
+      error: new Error("boom"),
+    });
+
+    render(<TemplatesPanel />);
+
+    expect(screen.getByText("模板接口暂不可用")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "新建模板" })).toBeDisabled();
   });
 });

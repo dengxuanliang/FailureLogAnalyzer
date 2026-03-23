@@ -1,16 +1,25 @@
-import { Card, Space, Table, Tag, Typography } from "antd";
+import { Alert, Card, Space, Table, Tag, Typography } from "antd";
 import { useTranslation } from "react-i18next";
 import { type BenchmarkAdapter, useAdapters } from "@/api/queries/config";
 
 export default function AdaptersPanel() {
   const { t } = useTranslation();
-  const { data = [], isLoading } = useAdapters();
+  const { data = [], isLoading, error } = useAdapters();
 
   return (
     <Card
       title={t("config.adapters.title")}
       extra={<Typography.Text type="secondary">{t("config.adapters.description")}</Typography.Text>}
     >
+      {error ? (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={t("config.adapters.loadError")}
+          description={error.message}
+        />
+      ) : null}
       <Table<BenchmarkAdapter>
         rowKey="name"
         loading={isLoading}

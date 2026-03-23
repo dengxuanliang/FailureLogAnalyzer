@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { Alert, Button, Card, Input, Typography } from "antd";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
@@ -7,12 +7,18 @@ import { useAuth } from "@/contexts/AuthContext";
 export default function Login() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { login, loading } = useAuth();
+  const { login, loading, token } = useAuth();
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!loading && token) {
+      navigate("/overview", { replace: true });
+    }
+  }, [loading, navigate, token]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

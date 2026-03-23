@@ -1,20 +1,19 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: fla
-
 commonLabels:
   app.kubernetes.io/part-of: failure-log-analyzer
   app.kubernetes.io/managed-by: kustomize
 
 resources:
-  - namespace.yaml
   - api/deployment.yaml
   - api/service.yaml
   - api/hpa.yaml
   - api/configmap.yaml
+  - worker/deployment-default.yaml
   - worker/deployment-rule.yaml
   - worker/deployment-llm.yaml
+  - worker/hpa-default.yaml
   - worker/hpa-rule.yaml
   - worker/hpa-llm.yaml
   - frontend/deployment.yaml

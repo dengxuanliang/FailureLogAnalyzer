@@ -6,6 +6,7 @@ __pycache__/
 *.py[cod]
 *.pyo
 .venv/
+backend/.venv
 venv/
 env/
 *.egg-info/
@@ -19,6 +20,7 @@ htmlcov/
 
 # Node
 node_modules/
+frontend/node_modules
 dist/
 .next/
 

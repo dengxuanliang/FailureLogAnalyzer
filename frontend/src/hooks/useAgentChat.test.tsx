@@ -5,6 +5,7 @@ import type { ActionPayload, ChatMessage } from "../types/agent";
 const mockSocketSend = jest.fn<(_payload: unknown) => boolean>();
 const mockDisconnect = jest.fn();
 const mockMutate: any = jest.fn();
+let websocketUrl = "";
 let socketHandlers: {
   onToken: (token: string) => void;
   onMessage: (message: ChatMessage) => void;
@@ -15,7 +16,8 @@ let socketHandlers: {
 };
 
 jest.unstable_mockModule("./useAgentWebSocket", () => ({
-  useAgentWebSocket: (_url: string, handlers: typeof socketHandlers) => {
+  useAgentWebSocket: (url: string, handlers: typeof socketHandlers) => {
+    websocketUrl = url;
     socketHandlers = handlers;
     return {
       send: mockSocketSend,
@@ -38,6 +40,12 @@ jest.unstable_mockModule("./useGlobalFilters", () => ({
 jest.unstable_mockModule("../api/queries/agent", () => ({
   useAgentChatMutation: () => ({
     mutate: mockMutate,
+  }),
+}));
+
+jest.unstable_mockModule("../contexts/AuthContext", () => ({
+  useAuth: () => ({
+    token: "jwt-token",
   }),
 }));
 
@@ -74,6 +82,7 @@ describe("useAgentChat", () => {
         time_range_end: "2026-03-31",
       },
     });
+    expect(websocketUrl).toContain("/api/v1/ws/agent?token=jwt-token");
   });
 
   it("streams websocket tokens into the placeholder and finalizes on done", () => {

@@ -1,3 +1,18 @@
+name: failure-log-analyzer
+
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql+asyncpg://fla:fla@postgres:5432/fla
+  REDIS_URL: redis://redis:6379/0
+  SECRET_KEY: ${SECRET_KEY:-change-me-in-production-use-32-chars-min}
+  ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  CORS_ORIGINS: ${CORS_ORIGINS:-["http://localhost:3000"]}
+  UPLOAD_DIR: /tmp/fla_uploads
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  PYTHONUNBUFFERED: "1"
+
 services:
   postgres:
     image: postgres:15-alpine
@@ -10,10 +25,10 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U fla"]
+      test: ["CMD-SHELL", "pg_isready -U fla -d fla"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   redis:
     image: redis:7-alpine
@@ -23,20 +38,42 @@ services:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
-      retries: 5
+      retries: 10
 
   api:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    environment:
+      <<: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
       - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - uploads_data:/tmp/fla_uploads
+    command:
+      - bash
+      - -lc
+      - alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/metrics', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  worker-default:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     environment:
-      DATABASE_URL: postgresql+asyncpg://fla:fla@postgres:5432/fla
-      REDIS_URL: redis://redis:6379/0
-      SECRET_KEY: ${SECRET_KEY:-change-me-in-production-use-32-chars-min}
-      ACCESS_TOKEN_EXPIRE_MINUTES: 60
-      ENVIRONMENT: development
+      <<: *backend-env
     depends_on:
       postgres:
         condition: service_healthy
@@ -44,7 +81,68 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      - uploads_data:/tmp/fla_uploads
+    command:
+      - bash
+      - -lc
+      - celery -A app.celery_app worker --queues=celery --concurrency=2 --loglevel=info --without-gossip --without-mingle
+
+  worker-rule:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      <<: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - uploads_data:/tmp/fla_uploads
+    command:
+      - bash
+      - -lc
+      - celery -A app.celery_app worker --queues=rule --concurrency=2 --loglevel=info --without-gossip --without-mingle
+
+  worker-llm:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      <<: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - uploads_data:/tmp/fla_uploads
+    command:
+      - bash
+      - -lc
+      - celery -A app.celery_app worker --queues=llm --concurrency=2 --loglevel=info --without-gossip --without-mingle
+
+  frontend:
+    image: node:20-alpine
+    working_dir: /tmp/fla-frontend
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      VITE_API_BASE_URL: /api/v1
+      VITE_PROXY_TARGET: http://api:8000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/src:ro
+    command:
+      - sh
+      - -lc
+      - rm -rf /tmp/fla-frontend && mkdir -p /tmp/fla-frontend && cp -R /src/. /tmp/fla-frontend && rm -rf /tmp/fla-frontend/node_modules /tmp/fla-frontend/dist && cd /tmp/fla-frontend && npm ci && npm run dev -- --host 0.0.0.0 --port 3000
 
 volumes:
   postgres_data:
+  uploads_data:

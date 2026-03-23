@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-default
+  labels:
+    app.kubernetes.io/name: worker-default
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: worker-default
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: worker-default
+        app.kubernetes.io/component: worker
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: worker-default
+          image: ghcr.io/org/fla-api:latest
+          imagePullPolicy: Always
+          command:
+            - celery
+            - -A
+            - app.celery_app
+            - worker
+            - --queues=celery
+            - --concurrency=2
+            - --loglevel=info
+            - --without-gossip
+            - --without-mingle
+          envFrom:
+            - configMapRef:
+                name: fla-api-config
+            - secretRef:
+                name: fla-api
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - celery -A app.celery_app inspect ping -d celery@$HOSTNAME
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            failureThreshold: 3

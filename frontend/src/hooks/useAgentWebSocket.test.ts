@@ -75,6 +75,7 @@ describe("useAgentWebSocket", () => {
     const onToken = jest.fn();
     const onMessage = jest.fn();
     const onAction = jest.fn();
+    const onConversationId = jest.fn();
     const onDisconnected = jest.fn();
     const handlers = {
       onToken,
@@ -82,6 +83,7 @@ describe("useAgentWebSocket", () => {
       onAction,
       onConnected: jest.fn(),
       onDisconnected,
+      onConversationId,
     };
     const message: ChatMessage = {
       id: "msg-1",
@@ -104,5 +106,51 @@ describe("useAgentWebSocket", () => {
     expect(onMessage).toHaveBeenCalledWith(message);
     expect(onAction).toHaveBeenCalledWith(action);
     expect(onDisconnected).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts the legacy backend envelope with data.messages and conversation_id", () => {
+    const onMessage = jest.fn();
+    const onConversationId = jest.fn();
+    const handlers = {
+      onToken: jest.fn(),
+      onMessage,
+      onAction: jest.fn(),
+      onConnected: jest.fn(),
+      onDisconnected: jest.fn(),
+      onConversationId,
+    };
+
+    renderHook(() => useAgentWebSocket("ws://localhost/ws", handlers));
+
+    act(() => {
+      mockWs.onmessage?.(
+        {
+          data: JSON.stringify({
+            type: "message",
+            data: {
+              conversation_id: "conv-legacy",
+              messages: [
+                { role: "user", content: "show compare" },
+                {
+                  id: "assistant-1",
+                  role: "assistant",
+                  content: "Opening compare view.",
+                  timestamp: "2026-03-21T00:00:00Z",
+                },
+              ],
+            },
+          }),
+        } as MessageEvent,
+      );
+    });
+
+    expect(onConversationId).toHaveBeenCalledWith("conv-legacy");
+    expect(onMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "assistant-1",
+        role: "assistant",
+        content: "Opening compare view.",
+      }),
+    );
   });
 });

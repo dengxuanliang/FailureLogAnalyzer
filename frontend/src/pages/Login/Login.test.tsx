@@ -78,4 +78,21 @@ describe("Login page", () => {
     });
     expect(localStorage.getItem("token")).not.toBeNull();
   });
+
+  it("redirects to overview when a valid token already exists", async () => {
+    localStorage.setItem(
+      "token",
+      makeToken({
+        sub: "user-1",
+        role: "analyst",
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      }),
+    );
+
+    renderLogin();
+
+    await waitFor(() => {
+      expect(screen.getByText("Overview Page")).toBeInTheDocument();
+    });
+  });
 });

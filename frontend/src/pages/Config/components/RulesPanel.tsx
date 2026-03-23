@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Button, Card, Popconfirm, Space, Switch, Table, Tag } from "antd";
+import { Alert, Button, Card, Popconfirm, Space, Switch, Table, Tag } from "antd";
 import { useTranslation } from "react-i18next";
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -16,7 +16,7 @@ export default function RulesPanel() {
   const { t } = useTranslation();
   const { user } = useAuth();
   const canWrite = user?.role !== "viewer";
-  const { data = [], isLoading } = useRules();
+  const { data = [], isLoading, error } = useRules();
   const createRule = useCreateRule();
   const updateRule = useUpdateRule();
   const deleteRule = useDeleteRule();
@@ -38,11 +38,20 @@ export default function RulesPanel() {
     <Card
       title={t("config.rules.title")}
       extra={
-        <Button type="primary" disabled={!canWrite} onClick={() => setCreating(true)}>
+        <Button type="primary" disabled={!canWrite || !!error} onClick={() => setCreating(true)}>
           {t("config.rules.create")}
         </Button>
       }
     >
+      {error ? (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={t("config.rules.loadError")}
+          description={error.message}
+        />
+      ) : null}
       <Table<AnalysisRule>
         rowKey="id"
         loading={isLoading}

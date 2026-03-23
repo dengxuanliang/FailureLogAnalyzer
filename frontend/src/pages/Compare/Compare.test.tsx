@@ -37,6 +37,8 @@ jest.unstable_mockModule("react-i18next", () => ({
       const map: Record<string, string> = {
         "compare.title": "版本对比",
         "compare.noVersions": "请先选择两个版本",
+        "compare.loadError": "版本对比数据加载失败",
+        "common.retry": "重试",
       };
       return map[key] ?? key;
     },
@@ -131,5 +133,39 @@ describe("Compare page", () => {
     expect(mockUseRadarData).toHaveBeenLastCalledWith("v1.0", "v2.0");
     expect(screen.getByText("能力雷达图")).toBeInTheDocument();
     expect(screen.getByText("变化摘要")).toBeInTheDocument();
+  });
+
+  it("shows retryable error state when compare queries fail", () => {
+    const refetch = jest.fn();
+    mockUseSessions.mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: true,
+      refetch,
+    });
+    mockUseVersionComparison.mockReturnValue({
+      data: null,
+      isLoading: false,
+      isError: false,
+      refetch: jest.fn(),
+    });
+    mockUseVersionDiff.mockReturnValue({
+      data: null,
+      isLoading: false,
+      isError: false,
+      refetch: jest.fn(),
+    });
+    mockUseRadarData.mockReturnValue({
+      data: null,
+      isLoading: false,
+      isError: false,
+      refetch: jest.fn(),
+    });
+
+    render(<Compare />);
+    expect(screen.getByText("版本对比数据加载失败")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /重\s*试/ }));
+    expect(refetch).toHaveBeenCalled();
   });
 });

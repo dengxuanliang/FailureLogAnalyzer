@@ -15,14 +15,18 @@ class AgentChatRequest(BaseModel):
 
 
 class AgentMessage(BaseModel):
+    id: str | None = None
     role: str
     content: str
     timestamp: datetime | None = None
+    action: dict[str, Any] | None = None
 
 
 class AgentChatResponse(BaseModel):
     conversation_id: str
     messages: list[AgentMessage]
+    reply: str = ""
+    action: dict[str, Any] | None = None
     current_step: str
     intent: str
     needs_human_input: bool = False

@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { useAgentChatMutation } from "../api/queries/agent";
+import { useAuth } from "../contexts/AuthContext";
 import { useAgentChatContext } from "../contexts/AgentChatContext";
 import { useGlobalFilters } from "./useGlobalFilters";
 import { useAgentWebSocket } from "./useAgentWebSocket";
@@ -13,16 +14,22 @@ const createLocalId = () => {
   return `agent-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 };
 
-const buildAgentWebSocketUrl = () => {
+const buildAgentWebSocketUrl = (token: string | null) => {
   const env = (import.meta.env ?? {}) as Partial<ImportMetaEnv>;
   const apiBaseUrl = env.VITE_API_BASE_URL ?? "/api/v1";
+  const searchParams = new URLSearchParams();
+  if (token) {
+    searchParams.set("token", token);
+  }
 
   if (apiBaseUrl.startsWith("http://") || apiBaseUrl.startsWith("https://")) {
-    return `${apiBaseUrl.replace(/^http/, "ws")}/ws/agent`;
+    const baseUrl = `${apiBaseUrl.replace(/^http/, "ws")}/ws/agent`;
+    return searchParams.size > 0 ? `${baseUrl}?${searchParams.toString()}` : baseUrl;
   }
 
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}${apiBaseUrl}/ws/agent`;
+  const baseUrl = `${protocol}//${window.location.host}${apiBaseUrl}/ws/agent`;
+  return searchParams.size > 0 ? `${baseUrl}?${searchParams.toString()}` : baseUrl;
 };
 
 const createAssistantMessage = (content: string): ChatMessage => ({
@@ -60,10 +67,11 @@ export function useAgentChat(): UseAgentChatReturn {
     pendingAction,
     setPendingAction,
   } = useAgentChatContext();
+  const { token } = useAuth();
   const { benchmark, model_version, time_range_start, time_range_end } = useGlobalFilters();
   const agentChatMutation = useAgentChatMutation();
 
-  const websocketUrl = useMemo(() => buildAgentWebSocketUrl(), []);
+  const websocketUrl = useMemo(() => buildAgentWebSocketUrl(token), [token]);
 
   const { send: sendWebSocket } = useAgentWebSocket(websocketUrl, {
     onConnected: () => setIsConnected(true),

@@ -4,11 +4,26 @@ kind: Kustomization
 namespace: fla-dev
 
 resources:
+  - namespace.yaml
   - ../../base
 
 patches:
   - path: patches/api-replicas.yaml
   - path: patches/worker-replicas.yaml
+  - path: patches/delete-certificate.yaml
+  - path: patches/delete-ingress.yaml
+  - path: patches/delete-monitoring-prometheusrule.yaml
+  - path: patches/delete-monitoring-servicemonitor.yaml
+  - path: patches/delete-scheduled-backup.yaml
+  - path: patches/postgres-dev.yaml
+  - target:
+      group: postgresql.cnpg.io
+      version: v1
+      kind: Cluster
+      name: postgres
+    patch: |-
+      - op: remove
+        path: /spec/backup
 
 images:
   - name: ghcr.io/org/fla-api
