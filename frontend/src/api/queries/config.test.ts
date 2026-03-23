@@ -22,12 +22,16 @@ const {
   useCreateStrategy,
   useCreateTemplate,
   useCreateUser,
+  useCreateProviderSecret,
   useDeleteRule,
+  useDeleteProviderSecret,
   useDeleteStrategy,
   useDeleteTemplate,
+  useProviderSecrets,
   useRules,
   useStrategies,
   useTemplates,
+  useUpdateProviderSecret,
   useUpdateRule,
   useUpdateStrategy,
   useUpdateTemplate,
@@ -221,5 +225,44 @@ describe("config query hooks", () => {
       expect.objectContaining({ username: "new-user" }),
     );
     expect(apiClientMock.patch).toHaveBeenCalledWith("/users/u2", { role: "viewer" });
+  });
+
+  it("fetches and mutates provider secrets", async () => {
+    apiClientMock.get.mockImplementationOnce(async () => ({
+      data: [{ id: "ps1", provider: "openai", name: "primary", secret_mask: "sk-t...3456" }],
+    }));
+    apiClientMock.post.mockImplementationOnce(async () => ({ data: { id: "ps2" } }));
+    apiClientMock.patch.mockImplementationOnce(async () => ({ data: { id: "ps2", is_active: false } }));
+    apiClientMock.delete.mockImplementationOnce(async () => ({ data: null }));
+
+    const listHook = renderHook(() => useProviderSecrets(), { wrapper: createWrapper() });
+    await waitFor(() => expect(listHook.result.current.isSuccess).toBe(true));
+    expect(apiClientMock.get).toHaveBeenCalledWith("/llm/provider-secrets");
+
+    const createHook = renderHook(() => useCreateProviderSecret(), { wrapper: createWrapper() });
+    const updateHook = renderHook(() => useUpdateProviderSecret(), { wrapper: createWrapper() });
+    const deleteHook = renderHook(() => useDeleteProviderSecret(), { wrapper: createWrapper() });
+
+    await act(async () => {
+      await createHook.result.current.mutateAsync({
+        provider: "openai",
+        name: "primary",
+        secret: "sk-test-123456",
+        is_active: true,
+        is_default: true,
+      });
+      await updateHook.result.current.mutateAsync({
+        id: "ps2",
+        data: { is_active: false },
+      });
+      await deleteHook.result.current.mutateAsync("ps2");
+    });
+
+    expect(apiClientMock.post).toHaveBeenCalledWith(
+      "/llm/provider-secrets",
+      expect.objectContaining({ provider: "openai", name: "primary" }),
+    );
+    expect(apiClientMock.patch).toHaveBeenCalledWith("/llm/provider-secrets/ps2", { is_active: false });
+    expect(apiClientMock.delete).toHaveBeenCalledWith("/llm/provider-secrets/ps2");
   });
 });

@@ -35,6 +35,8 @@ jest.unstable_mockModule("react-i18next", () => ({
         "nav.analysis": "错因分析",
         "nav.compare": "版本对比",
         "nav.crossBenchmark": "横向分析",
+        "nav.sessions": "会话中心",
+        "nav.reports": "报告中心",
         "nav.config": "分析配置",
         "nav.logout": "退出",
       };
@@ -76,6 +78,9 @@ describe("AppLayout", () => {
     expect(screen.getByText("错因分析")).toBeInTheDocument();
     expect(screen.getByText("版本对比")).toBeInTheDocument();
     expect(screen.getByText("横向分析")).toBeInTheDocument();
+    expect(screen.getByText("会话中心")).toBeInTheDocument();
+    expect(screen.getByText("报告中心")).toBeInTheDocument();
+    expect(screen.getByText("Operations")).toBeInTheDocument();
     expect(screen.getByText("分析配置")).toBeInTheDocument();
     expect(screen.getByText("退出")).toBeInTheDocument();
     expect(screen.getByTestId("filter-bar-mock")).toBeInTheDocument();
@@ -84,6 +89,15 @@ describe("AppLayout", () => {
 
     await userEvent.click(screen.getByText("错因分析"));
     expect(mockNavigate).toHaveBeenCalledWith("/analysis");
+
+    await userEvent.click(screen.getByText("Operations"));
+    expect(mockNavigate).toHaveBeenCalledWith("/operations");
+
+    await userEvent.click(screen.getByText("会话中心"));
+    expect(mockNavigate).toHaveBeenCalledWith("/sessions");
+
+    await userEvent.click(screen.getByText("报告中心"));
+    expect(mockNavigate).toHaveBeenCalledWith("/reports");
 
     await userEvent.click(screen.getByText("退出"));
     expect(mockLogout).toHaveBeenCalledTimes(1);

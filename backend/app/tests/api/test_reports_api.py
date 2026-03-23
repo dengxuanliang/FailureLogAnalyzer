@@ -150,6 +150,77 @@ async def test_get_report_not_found(async_client, fake_db, analyst_user):
 
 
 @pytest.mark.asyncio
+async def test_export_report_as_markdown(async_client, fake_db, analyst_user):
+    from app.main import app
+
+    report = SimpleNamespace(
+        id=uuid.uuid4(),
+        title="Seed",
+        report_type=ReportType.summary,
+        status=ReportStatus.done,
+        benchmark="mmlu",
+        model_version="v1",
+        session_ids=None,
+        time_range_start=None,
+        time_range_end=None,
+        content={"summary": {"total_records": 10, "total_errors": 3}},
+        error_message=None,
+        created_by="analyst",
+        created_at="2026-03-20T00:00:00Z",
+        updated_at="2026-03-20T00:00:00Z",
+    )
+    fake_db._reports = [report]
+
+    app.dependency_overrides[get_db] = lambda: fake_db
+    app.dependency_overrides[get_current_user] = _override_user(analyst_user)
+    try:
+        resp = await async_client.get(f"/api/v1/reports/{report.id}/export?format=markdown")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(get_current_user, None)
+
+    assert resp.status_code == 200
+    assert "# Seed" in resp.text
+    assert "total_records" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_export_report_as_json(async_client, fake_db, analyst_user):
+    from app.main import app
+
+    report = SimpleNamespace(
+        id=uuid.uuid4(),
+        title="Seed",
+        report_type=ReportType.summary,
+        status=ReportStatus.done,
+        benchmark="mmlu",
+        model_version="v1",
+        session_ids=None,
+        time_range_start=None,
+        time_range_end=None,
+        content={"summary": {"total_records": 10}},
+        error_message=None,
+        created_by="analyst",
+        created_at="2026-03-20T00:00:00Z",
+        updated_at="2026-03-20T00:00:00Z",
+    )
+    fake_db._reports = [report]
+
+    app.dependency_overrides[get_db] = lambda: fake_db
+    app.dependency_overrides[get_current_user] = _override_user(analyst_user)
+    try:
+        resp = await async_client.get(f"/api/v1/reports/{report.id}/export?format=json")
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(get_current_user, None)
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["title"] == "Seed"
+    assert data["content"]["summary"]["total_records"] == 10
+
+
+@pytest.mark.asyncio
 async def test_generate_requires_analyst(async_client, fake_db, viewer_user):
     from app.main import app
 

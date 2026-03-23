@@ -6,6 +6,7 @@ import RulesPanel from "./components/RulesPanel";
 import StrategiesPanel from "./components/StrategiesPanel";
 import TemplatesPanel from "./components/TemplatesPanel";
 import UsersPanel from "./components/UsersPanel";
+import ProviderSecretsPanel from "./components/ProviderSecretsPanel";
 
 const { Title } = Typography;
 
@@ -40,6 +41,11 @@ export default function Config() {
             key: "users",
             label: t("config.tabs.users"),
             children: <UsersPanel />,
+          },
+          {
+            key: "provider-secrets",
+            label: t("config.tabs.providerSecrets"),
+            children: <ProviderSecretsPanel />,
           },
         ]
       : []),

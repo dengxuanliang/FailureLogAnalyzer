@@ -51,6 +51,26 @@ async def get_job_status(redis, job_id: str) -> dict | None:
     return orjson.loads(raw)
 
 
+async def list_jobs(redis, *, limit: int = 100, status: str | None = None) -> list[dict]:
+    scan_iter = getattr(redis, "scan_iter", None)
+    getter = getattr(redis, "get", None)
+    if not callable(scan_iter) or not callable(getter):
+        return []
+
+    jobs: list[dict] = []
+    async for key in scan_iter(match=f"{_KEY_PREFIX}:*"):
+        raw = await getter(key)
+        if raw is None:
+            continue
+        payload = orjson.loads(raw)
+        if status and payload.get("status") != status:
+            continue
+        jobs.append(payload)
+
+    jobs.sort(key=lambda item: float(item.get("updated_at") or item.get("created_at") or 0.0), reverse=True)
+    return jobs[:limit]
+
+
 async def update_job(redis, job_id: str, **updates: Any) -> dict | None:
     existing = await get_job_status(redis, job_id)
     if existing is None:

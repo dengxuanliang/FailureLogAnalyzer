@@ -2,7 +2,12 @@ import orjson
 import pytest
 from unittest.mock import AsyncMock
 
-from app.ingestion.job_store import create_job, get_job_status, update_job_from_event
+from app.ingestion.job_store import (
+    create_job,
+    get_job_status,
+    list_jobs,
+    update_job_from_event,
+)
 
 
 @pytest.mark.asyncio
@@ -75,3 +80,63 @@ async def test_create_job_initializes_pending_status():
     decoded = orjson.loads(payload)
     assert decoded["status"] == "pending"
     assert decoded["job_id"] == "job-2"
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_filters_by_status_and_session_id_and_sorts_by_created_at():
+    redis = AsyncMock()
+
+    async def _scan_iter(_match):
+        for key in [b"ingest_job:1", b"ingest_job:2", b"ingest_job:3"]:
+            yield key
+
+    jobs = {
+        "ingest_job:1": {
+            "job_id": "1",
+            "session_id": "sess-a",
+            "status": "pending",
+            "created_at": 10.0,
+        },
+        "ingest_job:2": {
+            "job_id": "2",
+            "session_id": "sess-b",
+            "status": "done",
+            "created_at": 30.0,
+        },
+        "ingest_job:3": {
+            "job_id": "3",
+            "session_id": "sess-a",
+            "status": "done",
+            "created_at": 20.0,
+        },
+    }
+
+    redis.scan_iter = _scan_iter
+    redis.get.side_effect = lambda key: orjson.dumps(jobs[key.decode() if isinstance(key, bytes) else key])
+
+    items, total = await list_jobs(redis, limit=10, offset=0, status="done", session_id="sess-a")
+
+    assert total == 1
+    assert [item["job_id"] for item in items] == ["3"]
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_applies_offset_and_limit_after_sorting():
+    redis = AsyncMock()
+
+    async def _scan_iter(_match):
+        for key in [b"ingest_job:1", b"ingest_job:2", b"ingest_job:3"]:
+            yield key
+
+    redis.scan_iter = _scan_iter
+    redis.get.side_effect = [
+        orjson.dumps({"job_id": "1", "status": "done", "created_at": 10.0}),
+        orjson.dumps({"job_id": "2", "status": "done", "created_at": 30.0}),
+        orjson.dumps({"job_id": "3", "status": "done", "created_at": 20.0}),
+    ]
+
+    items, total = await list_jobs(redis, limit=1, offset=1)
+
+    assert total == 3
+    assert len(items) == 1
+    assert items[0]["job_id"] == "3"

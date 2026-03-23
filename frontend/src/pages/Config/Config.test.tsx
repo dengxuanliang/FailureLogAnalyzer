@@ -16,6 +16,7 @@ await jest.unstable_mockModule("react-i18next", () => ({
         "config.tabs.templates": "Prompt 模板",
         "config.tabs.adapters": "Benchmark Adapter",
         "config.tabs.users": "用户管理",
+        "config.tabs.providerSecrets": "Provider 密钥",
       })[key] ?? key,
   }),
 }));
@@ -44,6 +45,10 @@ await jest.unstable_mockModule("./components/UsersPanel", () => ({
   __esModule: true,
   default: () => <div data-testid="users-panel">users</div>,
 }));
+await jest.unstable_mockModule("./components/ProviderSecretsPanel", () => ({
+  __esModule: true,
+  default: () => <div data-testid="provider-secrets-panel">provider-secrets</div>,
+}));
 
 const { default: Config } = await import("./index");
 
@@ -58,6 +63,7 @@ describe("Config page", () => {
     expect(screen.getByText("Prompt 模板")).toBeInTheDocument();
     expect(screen.getByText("Benchmark Adapter")).toBeInTheDocument();
     expect(screen.getByText("用户管理")).toBeInTheDocument();
+    expect(screen.getByText("Provider 密钥")).toBeInTheDocument();
     expect(screen.getByTestId("rules-panel")).toBeInTheDocument();
   });
 
@@ -71,6 +77,7 @@ describe("Config page", () => {
     rerender(<Config />);
 
     expect(screen.getByText("用户管理")).toBeInTheDocument();
+    expect(screen.getByText("Provider 密钥")).toBeInTheDocument();
   });
 
   it("switches tabs", () => {

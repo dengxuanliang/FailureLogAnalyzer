@@ -129,3 +129,10 @@ class SessionCostSummaryResponse(BaseModel):
     total_calls: int
     total_cost: float
     by_model: list[SessionCostModelBreakdown]
+
+
+class GlobalCostSummaryResponse(BaseModel):
+    total_calls: int
+    total_cost: float
+    sessions_with_llm: int
+    by_model: list[SessionCostModelBreakdown]

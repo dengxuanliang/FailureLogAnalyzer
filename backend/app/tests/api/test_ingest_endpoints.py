@@ -149,6 +149,58 @@ async def test_job_status_404_for_unknown_job(async_client):
 
 
 @pytest.mark.asyncio
+async def test_list_ingest_jobs_returns_paginated_items(async_client):
+    from app.main import app
+
+    app.dependency_overrides[get_current_user] = _override_auth()
+    try:
+        redis = AsyncMock()
+        with (
+            patch(
+                "app.api.v1.ingest.list_jobs",
+                new=AsyncMock(
+                    return_value=(
+                        [
+                            {
+                                "job_id": "job-1",
+                                "session_id": "sess-1",
+                                "file_path": "/tmp/a.jsonl",
+                                "status": "running",
+                                "processed": 3,
+                                "total": 10,
+                                "total_written": 2,
+                                "total_skipped": 1,
+                                "created_at": 123.0,
+                                "reason": "",
+                            }
+                        ],
+                        1,
+                    )
+                ),
+            ) as mock_list_jobs,
+            patch("app.api.v1.ingest.get_redis", new=AsyncMock(return_value=redis)),
+        ):
+            resp = await async_client.get(
+                "/api/v1/ingest/jobs",
+                params={"status": "running", "limit": 20, "offset": 0, "session_id": "sess-1"},
+            )
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 1
+    assert body["items"][0]["job_id"] == "job-1"
+    mock_list_jobs.assert_awaited_once_with(
+        redis,
+        limit=20,
+        offset=0,
+        status="running",
+        session_id="sess-1",
+    )
+
+
+@pytest.mark.asyncio
 async def test_directory_ingest_queues_multiple_jobs(async_client, tmp_path):
     from app.main import app
     app.dependency_overrides[get_current_user] = _override_auth()

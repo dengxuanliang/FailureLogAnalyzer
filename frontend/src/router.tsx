@@ -10,6 +10,11 @@ const Analysis = lazy(() => import("@/pages/Analysis"));
 const Compare = lazy(() => import("@/pages/Compare"));
 const CrossBenchmark = lazy(() => import("@/pages/CrossBenchmark"));
 const Config = lazy(() => import("@/pages/Config"));
+const Sessions = lazy(() => import("@/pages/Sessions"));
+const Reports = lazy(() => import("@/pages/Reports"));
+const Operations = lazy(() => import("@/pages/Operations"));
+const SessionDetail = lazy(() => import("@/pages/Sessions/SessionDetail"));
+const ReportDetail = lazy(() => import("@/pages/Reports/ReportDetail"));
 
 function LazyFallback() {
   return (
@@ -52,10 +57,42 @@ const protectedChildren: RouteObject[] = [
     ),
   },
   {
+    path: "sessions",
+    element: (
+      <Suspense fallback={<LazyFallback />}>
+        <Sessions />
+      </Suspense>
+    ),
+  },
+  {
+    path: "sessions/:sessionId",
+    element: (
+      <Suspense fallback={<LazyFallback />}>
+        <SessionDetail />
+      </Suspense>
+    ),
+  },
+  {
     path: "compare",
     element: (
       <Suspense fallback={<LazyFallback />}>
         <Compare />
+      </Suspense>
+    ),
+  },
+  {
+    path: "reports",
+    element: (
+      <Suspense fallback={<LazyFallback />}>
+        <Reports />
+      </Suspense>
+    ),
+  },
+  {
+    path: "reports/:reportId",
+    element: (
+      <Suspense fallback={<LazyFallback />}>
+        <ReportDetail />
       </Suspense>
     ),
   },
@@ -72,6 +109,14 @@ const protectedChildren: RouteObject[] = [
     element: (
       <Suspense fallback={<LazyFallback />}>
         <Config />
+      </Suspense>
+    ),
+  },
+  {
+    path: "operations",
+    element: (
+      <Suspense fallback={<LazyFallback />}>
+        <Operations />
       </Suspense>
     ),
   },

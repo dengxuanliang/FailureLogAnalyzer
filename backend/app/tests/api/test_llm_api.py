@@ -233,6 +233,88 @@ async def test_get_llm_job_status_not_found(async_client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_list_llm_jobs(async_client: AsyncClient):
+    from app.main import app
+
+    db = _make_db()
+
+    async def _get_test_db():
+        yield db
+
+    app.dependency_overrides[get_current_user] = _analyst_override()
+    app.dependency_overrides[get_db] = _get_test_db
+    jobs = [
+        {
+            "job_id": "job-1",
+            "session_id": str(uuid.uuid4()),
+            "strategy_id": str(uuid.uuid4()),
+            "status": "queued",
+            "processed": 0,
+            "total": None,
+            "succeeded": 0,
+            "failed": 0,
+            "total_cost": 0.0,
+            "stop_reason": None,
+            "reason": "",
+            "celery_task_id": "celery-1",
+            "created_at": 1.0,
+            "updated_at": 1.5,
+        }
+    ]
+    with patch("app.api.v1.routers.llm.list_jobs", new=AsyncMock(return_value=jobs)):
+        try:
+            resp = await async_client.get("/api/v1/llm/jobs")
+        finally:
+            app.dependency_overrides.pop(get_current_user, None)
+            app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["job_id"] == "job-1"
+    assert data[0]["celery_task_id"] == "celery-1"
+
+
+@pytest.mark.asyncio
+async def test_get_global_llm_cost_summary(async_client: AsyncClient):
+    from app.main import app
+
+    db = _make_db()
+
+    async def _get_test_db():
+        yield db
+
+    app.dependency_overrides[get_current_user] = _analyst_override()
+    app.dependency_overrides[get_db] = _get_test_db
+    with patch(
+        "app.api.v1.routers.llm.get_global_cost_summary",
+        new=AsyncMock(
+            return_value={
+                "total_calls": 12,
+                "total_cost": 3.75,
+                "sessions_with_llm": 4,
+                "by_model": [
+                    {"llm_model": "gpt-4o", "calls": 10, "total_cost": 3.5},
+                    {"llm_model": "claude-sonnet-4", "calls": 2, "total_cost": 0.25},
+                ],
+            }
+        ),
+    ):
+        try:
+            resp = await async_client.get("/api/v1/llm/cost-summary")
+        finally:
+            app.dependency_overrides.pop(get_current_user, None)
+            app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_calls"] == 12
+    assert data["total_cost"] == 3.75
+    assert data["sessions_with_llm"] == 4
+    assert data["by_model"][0]["llm_model"] == "gpt-4o"
+
+
+@pytest.mark.asyncio
 async def test_prompt_templates_alias_endpoints(async_client: AsyncClient):
     from app.main import app
 

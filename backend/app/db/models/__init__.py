@@ -16,10 +16,11 @@ from app.db.models.error_tag import ErrorTag
 from app.db.models.analysis_rule import AnalysisRule
 from app.db.models.prompt_template import PromptTemplate
 from app.db.models.analysis_strategy import AnalysisStrategy
+from app.db.models.provider_secret import ProviderSecret
 from app.db.models.report import Report
 
 __all__ = [
     "Base", "UserRole", "AnalysisType", "SeverityLevel", "TagSource", "StrategyType", "ReportType", "ReportStatus",
     "User", "EvalSession", "EvalRecord", "AnalysisResult",
-    "ErrorTag", "AnalysisRule", "PromptTemplate", "AnalysisStrategy", "Report",
+    "ErrorTag", "AnalysisRule", "PromptTemplate", "AnalysisStrategy", "ProviderSecret", "Report",
 ]

@@ -32,6 +32,81 @@ export interface EvalSession {
   created_at: string;
 }
 
+export interface SessionDetail extends EvalSession {
+  updated_at: string;
+}
+
+export interface SessionDeleteResponse {
+  session_id: string;
+  deleted: boolean;
+}
+
+export interface SessionActionResponse {
+  session_id: string;
+  job_id: string;
+  message: string;
+}
+
+// === Operations / Jobs ===
+
+export interface IngestUploadPayload {
+  file: globalThis.File;
+  benchmark: string;
+  model: string;
+  model_version: string;
+  adapter_name?: string;
+  session_id?: string;
+}
+
+export interface IngestUploadResponse {
+  job_id: string;
+  session_id: string;
+  message: string;
+}
+
+export interface IngestJobStatus {
+  job_id: string;
+  session_id: string;
+  file_path: string;
+  status: string;
+  processed: number;
+  total: number | null;
+  total_written: number;
+  total_skipped: number;
+  reason?: string;
+  created_at: number;
+}
+
+export interface LlmJobTriggerPayload {
+  session_id: string;
+  strategy_id: string;
+  manual_record_ids?: string[];
+  expect_manual_records?: boolean;
+}
+
+export interface LlmJobTriggerResponse {
+  job_id: string;
+  celery_task_id: string;
+  status: string;
+}
+
+export interface LlmJobStatus {
+  job_id: string;
+  session_id: string;
+  strategy_id: string;
+  status: string;
+  processed: number;
+  total: number | null;
+  succeeded: number;
+  failed: number;
+  total_cost: number;
+  stop_reason: string | null;
+  reason: string;
+  celery_task_id?: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
 // === Analysis ===
 
 export interface AnalysisSummary {
@@ -258,6 +333,36 @@ export interface PromptTemplate {
   is_active: boolean;
   created_by: string;
   created_at: string;
+}
+
+// === Reports ===
+
+export type ReportType = "summary" | "comparison" | "cross_benchmark" | "custom";
+export type ReportStatus = "pending" | "generating" | "done" | "failed";
+
+export interface ReportListItem {
+  id: string;
+  title: string;
+  report_type: ReportType;
+  status: ReportStatus;
+  benchmark: string | null;
+  model_version: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReportDetail extends ReportListItem {
+  session_ids: string[] | null;
+  time_range_start: string | null;
+  time_range_end: string | null;
+  content: Record<string, unknown>;
+  error_message: string | null;
+}
+
+export interface ReportExportPayload {
+  blob: globalThis.Blob;
+  filename: string;
 }
 
 export type PromptTemplateCreate = Omit<

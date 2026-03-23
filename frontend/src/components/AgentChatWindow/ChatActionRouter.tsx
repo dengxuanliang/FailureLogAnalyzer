@@ -51,7 +51,7 @@ export function ChatActionRouter({ action, onHandled }: ChatActionRouterProps) {
             detail: { session_id: action.session_id },
           }),
         );
-        navigate("/overview");
+        navigate(`/sessions/${action.session_id}`);
         break;
     }
 

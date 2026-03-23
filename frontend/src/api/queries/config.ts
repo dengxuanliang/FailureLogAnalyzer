@@ -110,11 +110,34 @@ export type UserUpdate = Partial<Omit<UserCreate, "username">> & {
   is_active?: boolean;
 };
 
+export interface ProviderSecret {
+  id: string;
+  provider: string;
+  name: string;
+  secret_mask: string;
+  is_active: boolean;
+  is_default: boolean;
+  created_by?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProviderSecretCreate {
+  provider: string;
+  name: string;
+  secret: string;
+  is_active: boolean;
+  is_default: boolean;
+}
+
+export type ProviderSecretUpdate = Partial<ProviderSecretCreate>;
+
 const RULES_KEY = ["rules"] as const;
 const STRATEGIES_KEY = ["strategies"] as const;
 const TEMPLATES_KEY = ["promptTemplates"] as const;
 const ADAPTERS_KEY = ["adapters"] as const;
 const USERS_KEY = ["users"] as const;
+const PROVIDER_SECRETS_KEY = ["provider-secrets"] as const;
 
 export function useRules() {
   return useQuery<AnalysisRule[]>({
@@ -257,5 +280,45 @@ export function useUpdateUser() {
     mutationFn: ({ id, ...data }) =>
       apiClient.patch<UserInfo>(`/users/${id}`, data).then((response) => response.data),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: USERS_KEY }),
+  });
+}
+
+export function useProviderSecrets() {
+  return useQuery<ProviderSecret[]>({
+    queryKey: PROVIDER_SECRETS_KEY,
+    queryFn: () =>
+      apiClient.get<ProviderSecret[]>("/llm/provider-secrets").then((response) => response.data),
+  });
+}
+
+export function useCreateProviderSecret() {
+  const queryClient = useQueryClient();
+  return useMutation<ProviderSecret, Error, ProviderSecretCreate>({
+    mutationFn: (data) =>
+      apiClient
+        .post<ProviderSecret>("/llm/provider-secrets", data)
+        .then((response) => response.data),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: PROVIDER_SECRETS_KEY }),
+  });
+}
+
+export function useUpdateProviderSecret() {
+  const queryClient = useQueryClient();
+  return useMutation<ProviderSecret, Error, { id: string; data: ProviderSecretUpdate }>({
+    mutationFn: ({ id, data }) =>
+      apiClient
+        .patch<ProviderSecret>(`/llm/provider-secrets/${id}`, data)
+        .then((response) => response.data),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: PROVIDER_SECRETS_KEY }),
+  });
+}
+
+export function useDeleteProviderSecret() {
+  const queryClient = useQueryClient();
+  return useMutation<void, Error, string>({
+    mutationFn: async (id) => {
+      await apiClient.delete(`/llm/provider-secrets/${id}`);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: PROVIDER_SECRETS_KEY }),
   });
 }

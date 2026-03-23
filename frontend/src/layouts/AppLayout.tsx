@@ -2,7 +2,10 @@ import { App, Layout, Menu } from "antd";
 import {
   BarChartOutlined,
   BugOutlined,
+  CloudUploadOutlined,
+  DatabaseOutlined,
   DashboardOutlined,
+  FileTextOutlined,
   LogoutOutlined,
   SettingOutlined,
   SwapOutlined,
@@ -25,6 +28,9 @@ const menuItems = [
     icon: <BarChartOutlined />,
     labelKey: "nav.crossBenchmark",
   },
+  { key: "/sessions", icon: <DatabaseOutlined />, labelKey: "nav.sessions" },
+  { key: "/reports", icon: <FileTextOutlined />, labelKey: "nav.reports" },
+  { key: "/operations", icon: <CloudUploadOutlined />, label: "Operations" },
   { key: "/config", icon: <SettingOutlined />, labelKey: "nav.config" },
 ] as const;
 
@@ -38,7 +44,7 @@ export default function AppLayout() {
     ...menuItems.map((item) => ({
       key: item.key,
       icon: item.icon,
-      label: t(item.labelKey),
+      label: "label" in item ? item.label : t(item.labelKey),
     })),
     {
       key: "logout",
@@ -56,6 +62,9 @@ export default function AppLayout() {
 
     navigate(key);
   };
+
+  const activeKey =
+    menuItems.find((item) => location.pathname.startsWith(item.key))?.key ?? location.pathname;
 
   return (
     <App>
@@ -80,7 +89,7 @@ export default function AppLayout() {
           <Menu
             theme="dark"
             mode="inline"
-            selectedKeys={[location.pathname]}
+            selectedKeys={[activeKey]}
             items={items}
             onClick={handleMenuClick}
           />

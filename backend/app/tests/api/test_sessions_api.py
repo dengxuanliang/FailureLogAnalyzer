@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -84,3 +84,136 @@ async def test_list_sessions_returns_frontend_compatible_shape(async_client):
     assert body[0]["error_count"] == 0
     assert body[0]["accuracy"] == 0.0
     assert body[0]["tags"] == []
+
+
+@pytest.mark.asyncio
+async def test_get_session_detail_returns_normalized_shape(async_client):
+    from app.main import app
+
+    session = _make_session()
+    session.updated_at = session.created_at
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=session)
+
+    async def _get_test_db():
+        yield db
+
+    app.dependency_overrides[get_current_user] = _override_auth()
+    app.dependency_overrides[get_db] = _get_test_db
+    try:
+        resp = await async_client.get(f"/api/v1/sessions/{session.id}")
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["id"] == str(session.id)
+    assert body["model_version"] == session.model_version
+    assert body["total_count"] == 0
+    assert body["error_count"] == 0
+    assert body["accuracy"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_get_session_detail_returns_404_when_missing(async_client):
+    from app.main import app
+
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=None)
+
+    async def _get_test_db():
+        yield db
+
+    app.dependency_overrides[get_current_user] = _override_auth()
+    app.dependency_overrides[get_db] = _get_test_db
+    try:
+        resp = await async_client.get(f"/api/v1/sessions/{uuid.uuid4()}")
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_session_returns_deleted_payload(async_client):
+    from app.main import app
+
+    session = _make_session()
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=session)
+    db.delete = AsyncMock()
+    db.commit = AsyncMock()
+
+    async def _get_test_db():
+        yield db
+
+    app.dependency_overrides[get_current_user] = _override_auth()
+    app.dependency_overrides[get_db] = _get_test_db
+    try:
+        resp = await async_client.delete(f"/api/v1/sessions/{session.id}")
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {"session_id": str(session.id), "deleted": True}
+    db.delete.assert_awaited_once_with(session)
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_delete_session_returns_404_when_missing(async_client):
+    from app.main import app
+
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=None)
+    db.delete = AsyncMock()
+    db.commit = AsyncMock()
+
+    async def _get_test_db():
+        yield db
+
+    app.dependency_overrides[get_current_user] = _override_auth()
+    app.dependency_overrides[get_db] = _get_test_db
+    try:
+        resp = await async_client.delete(f"/api/v1/sessions/{uuid.uuid4()}")
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 404
+    db.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_rerun_rules_dispatches_background_job(async_client):
+    from app.main import app
+
+    session = _make_session()
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=session)
+
+    async def _get_test_db():
+        yield db
+
+    app.dependency_overrides[get_current_user] = _override_auth()
+    app.dependency_overrides[get_db] = _get_test_db
+    try:
+        with patch("app.api.v1.routers.sessions.run_rules") as mock_run_rules:
+            mock_run_rules.delay.return_value = MagicMock(id="celery-rule-job-1")
+            resp = await async_client.post(
+                f"/api/v1/sessions/{session.id}/actions/rerun-rules",
+                json={"rule_ids": ["rule.a"]},
+            )
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["job_id"] == "celery-rule-job-1"
+    assert body["session_id"] == str(session.id)
+    mock_run_rules.delay.assert_called_once_with(str(session.id), ["rule.a"])

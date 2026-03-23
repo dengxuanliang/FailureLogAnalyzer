@@ -6,7 +6,7 @@ from typing import Annotated
 
 import aiofiles
 import aiofiles.os
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
@@ -16,7 +16,7 @@ from app.db.models.user import User
 from app.db.session import get_async_session
 from app.ingestion.directory_watcher import DirectoryWatcher
 from app.ingestion.adapters.registry import AdapterRegistry
-from app.ingestion.job_store import create_job, get_job_status
+from app.ingestion.job_store import create_job, get_job_status, list_jobs
 from app.ingestion.session_store import ensure_eval_session
 from app.tasks.ingest import parse_file
 
@@ -55,6 +55,24 @@ class DirectoryRequest(BaseModel):
 class DirectoryResponse(BaseModel):
     session_id: str
     jobs: list[dict]
+
+
+class IngestJobListItem(BaseModel):
+    job_id: str
+    session_id: str
+    file_path: str
+    status: str
+    processed: int = 0
+    total: int | None = None
+    total_written: int = 0
+    total_skipped: int = 0
+    created_at: float
+    reason: str = ""
+
+
+class IngestJobListResponse(BaseModel):
+    items: list[IngestJobListItem]
+    total: int
 
 
 class WatcherStartRequest(BaseModel):
@@ -301,3 +319,23 @@ async def get_ingest_status(
             detail=f"Job {job_id!r} not found",
         )
     return job
+
+
+@router.get("/jobs", response_model=IngestJobListResponse)
+async def list_ingest_jobs(
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
+    session_id: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    current_user: User = Depends(get_current_user),
+) -> IngestJobListResponse:
+    redis = await get_redis()
+    jobs, total = await list_jobs(
+        redis,
+        limit=limit,
+        offset=offset,
+        status=status_filter,
+        session_id=session_id,
+    )
+    items = [IngestJobListItem(**job) for job in jobs]
+    return IngestJobListResponse(items=items, total=total)

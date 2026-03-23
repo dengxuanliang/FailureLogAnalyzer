@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +15,28 @@ from app.schemas.report import ReportGenerateRequest, ReportGenerateResponse, Re
 from app.tasks.report import generate_report
 
 router = APIRouter(prefix="/reports", tags=["reports"])
+
+
+def _render_report_markdown(report: Report) -> str:
+    content = report.content or {}
+    body = json.dumps(content, ensure_ascii=False, indent=2)
+    return "\n".join(
+        [
+            f"# {report.title}",
+            "",
+            f"- report_type: {report.report_type.value}",
+            f"- status: {report.status.value}",
+            f"- benchmark: {report.benchmark or ''}",
+            f"- model_version: {report.model_version or ''}",
+            "",
+            "## content",
+            "",
+            "```json",
+            body,
+            "```",
+            "",
+        ]
+    )
 
 
 @router.post("/generate", response_model=ReportGenerateResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -82,3 +105,29 @@ async def get_report(
     if report is None:
         raise HTTPException(status_code=404, detail="Report not found")
     return report
+
+
+@router.get("/{report_id}/export")
+async def export_report(
+    report_id: uuid.UUID,
+    format: str = Query(default="json", pattern="^(json|markdown)$"),
+    db: AsyncSession = Depends(get_db),
+    _=Depends(require_role(UserRole.viewer)),
+):
+    report = await db.get(Report, report_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    if format == "markdown":
+        return Response(
+            content=_render_report_markdown(report),
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename=\"report-{report_id}.md\"'},
+        )
+
+    payload = ReportResponse.model_validate(report).model_dump(mode="json")
+    return Response(
+        content=json.dumps(payload, ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename=\"report-{report_id}.json\"'},
+    )

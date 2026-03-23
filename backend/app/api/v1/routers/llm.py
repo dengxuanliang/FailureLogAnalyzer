@@ -5,7 +5,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select, func as sqlfunc
+from sqlalchemy import func as sqlfunc, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,11 +16,13 @@ from app.db.models.analysis_strategy import AnalysisStrategy
 from app.db.models.enums import AnalysisType, UserRole, StrategyType
 from app.db.models.eval_record import EvalRecord
 from app.db.models.eval_session import EvalSession
+from app.db.models.provider_secret import ProviderSecret
 from app.db.models.prompt_template import PromptTemplate
 from app.db.models.user import User
 from app.db.session import get_db
-from app.llm.job_store import create_job, get_job_status, update_job
+from app.llm.job_store import create_job, get_job_status, list_jobs, update_job
 from app.schemas.llm import (
+    GlobalCostSummaryResponse,
     LlmJobStatusResponse,
     LlmJobTriggerRequest,
     LlmJobTriggerResponse,
@@ -33,6 +35,12 @@ from app.schemas.llm import (
     TemplatePatch,
     TemplateResponse,
 )
+from app.schemas.provider_secret import (
+    ProviderSecretCreate,
+    ProviderSecretPatch,
+    ProviderSecretResponse,
+)
+from app.services.provider_secret_crypto import encrypt_secret, mask_secret
 from app.tasks.analysis import run_llm_judge
 
 router = APIRouter(prefix="/llm", tags=["llm"])
@@ -42,6 +50,163 @@ class LlmTriggerCompatRequest(BaseModel):
     record_ids: list[uuid.UUID] = Field(min_length=1)
     strategy: str | None = None
 
+
+async def _clear_provider_default(
+    db: AsyncSession,
+    *,
+    provider: str,
+    exclude_id: uuid.UUID | None = None,
+) -> None:
+    stmt = (
+        update(ProviderSecret)
+        .where(
+            ProviderSecret.provider == provider,
+            ProviderSecret.is_default.is_(True),
+        )
+        .values(is_default=False)
+    )
+    if exclude_id is not None:
+        stmt = stmt.where(ProviderSecret.id != exclude_id)
+    await db.execute(stmt)
+
+
+async def _ensure_provider_name_unique(
+    db: AsyncSession,
+    *,
+    provider: str,
+    name: str,
+    exclude_id: uuid.UUID | None = None,
+) -> None:
+    stmt = select(ProviderSecret).where(
+        ProviderSecret.provider == provider,
+        ProviderSecret.name == name,
+    )
+    if exclude_id is not None:
+        stmt = stmt.where(ProviderSecret.id != exclude_id)
+    existing = (await db.execute(stmt)).scalars().first()
+    if existing is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Secret '{name}' already exists for provider '{provider}'",
+        )
+
+
+@router.get("/provider-secrets", response_model=list[ProviderSecretResponse])
+async def list_provider_secrets(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_role(UserRole.admin)),
+):
+    rows = await db.execute(
+        select(ProviderSecret).order_by(
+            ProviderSecret.provider.asc(),
+            ProviderSecret.created_at.desc(),
+        )
+    )
+    return rows.scalars().all()
+
+
+@router.post(
+    "/provider-secrets",
+    response_model=ProviderSecretResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_provider_secret(
+    payload: ProviderSecretCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.admin)),
+):
+    provider = payload.provider.strip().lower()
+    name = payload.name.strip()
+    await _ensure_provider_name_unique(db, provider=provider, name=name)
+
+    is_default = payload.is_default
+    is_active = payload.is_active or is_default
+    if is_default:
+        await _clear_provider_default(db, provider=provider)
+
+    row = ProviderSecret(
+        provider=provider,
+        name=name,
+        encrypted_secret=encrypt_secret(payload.secret),
+        secret_mask=mask_secret(payload.secret),
+        is_active=is_active,
+        is_default=is_default,
+        created_by=current_user.username,
+    )
+    db.add(row)
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=f"Create provider secret failed: {exc}")
+    await db.refresh(row)
+    return row
+
+
+@router.patch("/provider-secrets/{secret_id}", response_model=ProviderSecretResponse)
+@router.put("/provider-secrets/{secret_id}", response_model=ProviderSecretResponse)
+async def patch_provider_secret(
+    secret_id: uuid.UUID,
+    payload: ProviderSecretPatch,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_role(UserRole.admin)),
+):
+    row = await db.get(ProviderSecret, secret_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Provider secret not found")
+
+    updates = payload.model_dump(exclude_unset=True)
+    next_provider = updates.get("provider", row.provider)
+    next_name = updates.get("name", row.name)
+    if isinstance(next_provider, str):
+        next_provider = next_provider.strip().lower()
+    if isinstance(next_name, str):
+        next_name = next_name.strip()
+
+    if next_provider != row.provider or next_name != row.name:
+        await _ensure_provider_name_unique(
+            db,
+            provider=next_provider,
+            name=next_name,
+            exclude_id=row.id,
+        )
+
+    row.provider = next_provider
+    row.name = next_name
+
+    if "secret" in updates:
+        row.encrypted_secret = encrypt_secret(updates["secret"])
+        row.secret_mask = mask_secret(updates["secret"])
+
+    if "is_active" in updates:
+        row.is_active = updates["is_active"]
+
+    if updates.get("is_default") is True:
+        await _clear_provider_default(db, provider=row.provider, exclude_id=row.id)
+        row.is_default = True
+        row.is_active = True
+    elif updates.get("is_default") is False:
+        row.is_default = False
+
+    if row.is_active is False:
+        row.is_default = False
+
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+@router.delete("/provider-secrets/{secret_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_provider_secret(
+    secret_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_role(UserRole.admin)),
+):
+    row = await db.get(ProviderSecret, secret_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Provider secret not found")
+    await db.delete(row)
+    await db.commit()
 
 async def _enqueue_llm_job(
     *,
@@ -68,6 +233,44 @@ async def _enqueue_llm_job(
     )
     await update_job(redis, job_id, celery_task_id=task.id, status="queued")
     return LlmJobTriggerResponse(job_id=job_id, celery_task_id=task.id, status="queued")
+
+
+async def get_global_cost_summary(db: AsyncSession) -> dict:
+    by_model_stmt = (
+        select(
+            AnalysisResult.llm_model,
+            sqlfunc.count(AnalysisResult.id),
+            sqlfunc.coalesce(sqlfunc.sum(AnalysisResult.llm_cost), 0.0),
+        )
+        .where(AnalysisResult.analysis_type == AnalysisType.llm)
+        .group_by(AnalysisResult.llm_model)
+        .order_by(sqlfunc.coalesce(sqlfunc.sum(AnalysisResult.llm_cost), 0.0).desc())
+    )
+    totals_stmt = select(
+        sqlfunc.count(AnalysisResult.id),
+        sqlfunc.coalesce(sqlfunc.sum(AnalysisResult.llm_cost), 0.0),
+        sqlfunc.count(sqlfunc.distinct(EvalRecord.session_id)),
+    ).join(EvalRecord, EvalRecord.id == AnalysisResult.record_id).where(
+        AnalysisResult.analysis_type == AnalysisType.llm
+    )
+
+    rows = (await db.execute(by_model_stmt)).all()
+    total_calls, total_cost, session_count = (await db.execute(totals_stmt)).one()
+
+    breakdown = [
+        SessionCostModelBreakdown(
+            llm_model=(llm_model or ""),
+            calls=int(calls or 0),
+            total_cost=float(model_cost or 0.0),
+        )
+        for llm_model, calls, model_cost in rows
+    ]
+    return {
+        "total_calls": int(total_calls or 0),
+        "total_cost": float(total_cost or 0.0),
+        "sessions_with_llm": int(session_count or 0),
+        "by_model": breakdown,
+    }
 
 
 async def trigger_llm_job_compat_by_record_ids(
@@ -302,6 +505,17 @@ async def trigger_llm_job(
     )
 
 
+@router.get("/jobs", response_model=list[LlmJobStatusResponse])
+async def get_llm_jobs(
+    limit: int = 100,
+    status_filter: str | None = None,
+    _: User = Depends(get_current_user),
+):
+    redis = await get_redis()
+    items = await list_jobs(redis, limit=limit, status=status_filter)
+    return [LlmJobStatusResponse(**payload) for payload in items]
+
+
 @router.get("/jobs/{job_id}/status", response_model=LlmJobStatusResponse)
 async def get_llm_job_status(
     job_id: str,
@@ -360,3 +574,12 @@ async def get_session_cost_summary(
         total_cost=total_cost,
         by_model=breakdown,
     )
+
+
+@router.get("/cost-summary", response_model=GlobalCostSummaryResponse)
+async def get_llm_cost_summary(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    payload = await get_global_cost_summary(db)
+    return GlobalCostSummaryResponse(**payload)
