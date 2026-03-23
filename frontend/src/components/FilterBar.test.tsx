@@ -170,4 +170,15 @@ describe("FilterBar", () => {
     expect(params.get("benchmark")).toBe("ceval");
     expect(params.get("model_version")).toBe("v2.0");
   });
+
+  it("always includes built-in benchmark options before dynamic session values", () => {
+    renderFilterBar();
+
+    const benchmarkOptions = screen.getAllByRole("option").map((option) => option.textContent);
+    expect(benchmarkOptions).toContain("livecodebench v6");
+    expect(benchmarkOptions).toContain("fullstackbench");
+    expect(benchmarkOptions).toContain("codeforces");
+    expect(benchmarkOptions).toContain("mmlu");
+    expect(benchmarkOptions).toContain("ceval");
+  });
 });

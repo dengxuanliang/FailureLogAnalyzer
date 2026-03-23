@@ -7,6 +7,7 @@ import { useGlobalFilters } from "@/hooks/useGlobalFilters";
 
 const { RangePicker } = DatePicker;
 const { Text } = Typography;
+const DEFAULT_BENCHMARK_OPTIONS = ["livecodebench v6", "fullstackbench", "codeforces"];
 
 export default function FilterBar() {
   const { t } = useTranslation();
@@ -14,11 +15,14 @@ export default function FilterBar() {
   const { data: sessions, isLoading } = useSessions();
 
   const benchmarkOptions = useMemo(() => {
-    if (!sessions) {
-      return [];
-    }
+    const mergedBenchmarks = new Set<string>(DEFAULT_BENCHMARK_OPTIONS);
+    sessions?.forEach((session) => {
+      if (session.benchmark) {
+        mergedBenchmarks.add(session.benchmark);
+      }
+    });
 
-    return Array.from(new Set(sessions.map((session) => session.benchmark))).map((value) => ({
+    return Array.from(mergedBenchmarks).map((value) => ({
       label: value,
       value,
     }));

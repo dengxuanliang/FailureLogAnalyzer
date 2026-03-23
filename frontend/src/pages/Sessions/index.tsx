@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { Alert, Button, Descriptions, Drawer, Empty, Space, Table, Tag, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
+import type { TableRowSelection } from "antd/es/table/interface";
 import { useTranslation } from "react-i18next";
 import {
   useDeleteSession,
@@ -30,6 +31,7 @@ export default function Sessions() {
   const rerunMutation = useRerunSessionRules();
 
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [selectedSessionIds, setSelectedSessionIds] = useState<string[]>([]);
   const [pendingActionSessionId, setPendingActionSessionId] = useState<string | null>(null);
   const [pendingActionType, setPendingActionType] = useState<"delete" | "rerun" | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -56,12 +58,47 @@ export default function Sessions() {
       if (selectedSessionId === sessionId) {
         setSelectedSessionId(null);
       }
+      setSelectedSessionIds((current) => current.filter((id) => id !== sessionId));
       setActionMessage(t("sessions.deleteSuccess"));
     } finally {
       setPendingActionSessionId(null);
       setPendingActionType(null);
     }
   }, [deleteMutation, selectedSessionId, t]);
+
+  const handleDeleteSelectedSessions = useCallback(async () => {
+    if (selectedSessionIds.length === 0) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      t("sessions.deleteSelectedConfirm", { count: selectedSessionIds.length }),
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setPendingActionType("delete");
+    try {
+      await Promise.all(selectedSessionIds.map((sessionId) => deleteMutation.mutateAsync(sessionId)));
+      if (selectedSessionId && selectedSessionIds.includes(selectedSessionId)) {
+        setSelectedSessionId(null);
+      }
+      setSelectedSessionIds([]);
+      setActionMessage(t("sessions.deleteSelectedSuccess", { count: selectedSessionIds.length }));
+    } finally {
+      setPendingActionSessionId(null);
+      setPendingActionType(null);
+    }
+  }, [deleteMutation, selectedSessionId, selectedSessionIds, t]);
+
+  const rowSelection = useMemo<TableRowSelection<EvalSession>>(
+    () => ({
+      selectedRowKeys: selectedSessionIds,
+      onChange: (nextSelectedRowKeys) => setSelectedSessionIds(nextSelectedRowKeys.map(String)),
+    }),
+    [selectedSessionIds],
+  );
 
   const columns: ColumnsType<EvalSession> = useMemo(
     () => [
@@ -181,10 +218,27 @@ export default function Sessions() {
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       <Title level={4}>{t("sessions.title")}</Title>
       {actionMessage ? <Alert type="success" message={actionMessage} showIcon /> : null}
+      <Space wrap>
+        <Button
+          danger
+          onClick={() => void handleDeleteSelectedSessions()}
+          disabled={selectedSessionIds.length === 0}
+          loading={pendingActionType === "delete" && deleteMutation.isPending}
+        >
+          {t("sessions.actions.deleteSelected", { count: selectedSessionIds.length })}
+        </Button>
+        <Button
+          onClick={() => setSelectedSessionIds([])}
+          disabled={selectedSessionIds.length === 0}
+        >
+          {t("sessions.actions.clearSelection")}
+        </Button>
+      </Space>
       <Table
         rowKey={(record) => record.id}
         columns={columns}
         dataSource={sessionsQuery.data ?? []}
+        rowSelection={rowSelection}
         loading={sessionsQuery.isLoading}
         pagination={{ pageSize: 10 }}
       />

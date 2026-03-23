@@ -11,15 +11,19 @@ const originalGetComputedStyle = window.getComputedStyle;
 
 jest.unstable_mockModule("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string) => {
+    t: (key: string, options?: Record<string, string | number>) => {
       const map: Record<string, string> = {
         "sessions.title": "Sessions Center",
         "sessions.actions.view": "View Detail",
         "sessions.actions.rerun": "Rerun Rules",
         "sessions.actions.delete": "Delete Session",
+        "sessions.actions.deleteSelected": "Delete Selected ({{count}})",
+        "sessions.actions.clearSelection": "Clear Selection",
         "sessions.detail.title": "Session Detail",
         "sessions.detail.updatedAt": "Updated At",
         "sessions.deleteSuccess": "Deleted",
+        "sessions.deleteSelectedSuccess": "Deleted {{count}} sessions",
+        "sessions.deleteSelectedConfirm": "Delete {{count}} selected sessions?",
         "common.loading": "Loading",
         "common.retry": "Retry",
         "common.error": "Load Failed",
@@ -42,7 +46,7 @@ jest.unstable_mockModule("react-i18next", () => ({
         "sessions.detail.accuracy": "Accuracy",
         "sessions.detail.createdAt": "Created At",
       };
-      return map[key] ?? key;
+      return (map[key] ?? key).replace(/\{\{(\w+)\}\}/g, (_match, token) => String(options?.[token] ?? ""));
     },
   }),
 }));
@@ -61,6 +65,18 @@ jest.unstable_mockModule("@/api/queries/sessions", () => ({
         accuracy: 0.85,
         tags: ["nightly"],
         created_at: "2026-03-23T00:00:00Z",
+      },
+      {
+        id: "sess-2",
+        model: "gpt-4.1",
+        model_version: "v2",
+        benchmark: "codeforces",
+        dataset_name: "cf",
+        total_count: 80,
+        error_count: 10,
+        accuracy: 0.875,
+        tags: ["weekly"],
+        created_at: "2026-03-24T00:00:00Z",
       },
     ],
     isLoading: false,
@@ -81,6 +97,8 @@ jest.unstable_mockModule("@/api/queries/sessions", () => ({
 const { default: Sessions } = await import("./index");
 
 describe("Sessions page", () => {
+  const originalConfirm = window.confirm;
+
   beforeAll(() => {
     Object.defineProperty(window, "matchMedia", {
       writable: true,
@@ -110,10 +128,12 @@ describe("Sessions page", () => {
       writable: true,
       value: originalGetComputedStyle,
     });
+    window.confirm = originalConfirm;
   });
 
   beforeEach(() => {
     jest.clearAllMocks();
+    window.confirm = jest.fn(() => true);
     mockUseSessionDetail.mockReturnValue({
       data: {
         id: "sess-1",
@@ -139,7 +159,7 @@ describe("Sessions page", () => {
     expect(screen.getByText("Sessions Center")).toBeInTheDocument();
     expect(screen.getByText("gpt-4o")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "View Detail" }));
+    await userEvent.click(screen.getAllByRole("button", { name: "View Detail" })[0]);
 
     expect(await screen.findByText("Session Detail")).toBeInTheDocument();
     expect(screen.getByText("Updated At")).toBeInTheDocument();
@@ -158,14 +178,35 @@ describe("Sessions page", () => {
 
     render(<Sessions />);
 
-    await userEvent.click(screen.getByRole("button", { name: "Rerun Rules" }));
+    await userEvent.click(screen.getAllByRole("button", { name: "Rerun Rules" })[0]);
     await waitFor(() => {
       expect(mockRerunMutateAsync).toHaveBeenCalledWith({ sessionId: "sess-1" });
     });
 
-    await userEvent.click(screen.getByRole("button", { name: "Delete Session" }));
+    await userEvent.click(screen.getAllByRole("button", { name: "Delete Session" })[0]);
     await waitFor(() => {
       expect(mockDeleteMutateAsync).toHaveBeenCalledWith("sess-1");
+    });
+  });
+
+  it("supports selecting multiple sessions and deleting them in batch", async () => {
+    mockDeleteMutateAsync.mockResolvedValue({
+      session_id: "sess-1",
+      deleted: true,
+    });
+
+    render(<Sessions />);
+
+    const checkboxes = screen.getAllByRole("checkbox");
+    await userEvent.click(checkboxes[1]);
+    await userEvent.click(checkboxes[2]);
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete Selected (2)" }));
+
+    await waitFor(() => {
+      expect(window.confirm).toHaveBeenCalled();
+      expect(mockDeleteMutateAsync).toHaveBeenNthCalledWith(1, "sess-1");
+      expect(mockDeleteMutateAsync).toHaveBeenNthCalledWith(2, "sess-2");
     });
   });
 });
